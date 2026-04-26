@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Shader Pilot</title>
+<link href="https://fonts.googleapis.com/css2?family=VT323&family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    overflow: hidden; background: #05010f; color: #f0e6ff;
+    font-family: 'VT323', monospace; -webkit-font-smoothing: antialiased;
+    overscroll-behavior: none; touch-action: none;
+  }
+
+  /* CRT scanlines + vignette overlay */
+  body::before {
+    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 50;
+    background:
+      repeating-linear-gradient(
+        0deg,
+        rgba(0,0,0,0.18) 0px,
+        rgba(0,0,0,0.18) 1px,
+        transparent 1px,
+        transparent 3px
+      );
+    mix-blend-mode: multiply;
+  }
+  body::after {
+    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 51;
+    background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.55) 100%);
+  }
+
+  /* Auth screen */
+  .auth-screen {
+    position: fixed; inset: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+    background:
+      radial-gradient(ellipse at 30% 20%, rgba(255,0,128,0.25), transparent 50%),
+      radial-gradient(ellipse at 70% 80%, rgba(0,200,255,0.25), transparent 50%),
+      linear-gradient(180deg, #0a0420 0%, #05010f 100%);
+  }
+
+  .auth-stars {
+    position: absolute; inset: 0; pointer-events: none;
+    background-image:
+      radial-gradient(1px 1px at 20% 30%, #fff, transparent),
+      radial-gradient(1px 1px at 60% 70%, #fff, transparent),
+      radial-gradient(2px 2px at 80% 20%, #fff, transparent),
+      radial-gradient(1px 1px at 40% 90%, #fff, transparent),
+      radial-gradient(1px 1px at 90% 50%, #ff80c0, transparent),
+      radial-gradient(2px 2px at 10% 70%, #80c0ff, transparent),
+      radial-gradient(1px 1px at 50% 40%, #fff, transparent);
+    background-size: 200px 200px;
+    animation: twinkle 4s steps(2) infinite;
+    opacity: 0.8;
+  }
+  @keyframes twinkle {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+  }
+
+  .auth-card {
+    position: relative; z-index: 2;
+    width: 100%; max-width: 380px;
+    background: rgba(10, 4, 30, 0.85);
+    border: 2px solid #ff3380;
+    border-radius: 4px;
+    padding: 28px 22px;
+    box-shadow:
+      0 0 0 1px rgba(255,51,128,0.4),
+      0 0 30px rgba(255,51,128,0.4),
+      inset 0 0 30px rgba(255,51,128,0.1);
+  }
+
+  .auth-title {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 1.1rem;
+    text-align: center;
+    margin-bottom: 6px;
+    color: #ffeb80;
+    text-shadow: 2px 2px 0 #ff3380, 4px 4px 0 #6020c0;
+    letter-spacing: 2px;
+    line-height: 1.5;
+  }
+  .auth-sub {
+    text-align: center;
+    color: #80c0ff;
+    font-size: 1.1rem;
+    margin-bottom: 22px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  .auth-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 18px;
+    padding: 3px;
+    background: rgba(0,0,0,0.5);
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+  .auth-tab {
+    flex: 1; border: 0; background: transparent;
+    color: #80a0c0; padding: 8px;
+    font-family: 'VT323', monospace; font-size: 1.1rem;
+    letter-spacing: 2px; cursor: pointer;
+    text-transform: uppercase;
+    transition: all 0.15s;
+  }
+  .auth-tab.active {
+    background: #ff3380;
+    color: #fff;
+    box-shadow: 0 0 10px rgba(255,51,128,0.6);
+  }
+
+  .field { margin-bottom: 14px; }
+  .field label {
+    display: block; font-size: 0.95rem;
+    color: #ffeb80; letter-spacing: 2px;
+    text-transform: uppercase; margin-bottom: 4px;
+  }
+  .field input {
+    width: 100%; background: rgba(0,0,0,0.6);
+    border: 1px solid #6020c0; color: #f0e6ff;
+    padding: 10px 12px; font-family: 'VT323', monospace;
+    font-size: 1.2rem; letter-spacing: 1px;
+    border-radius: 0; outline: none;
+    transition: all 0.15s;
+  }
+  .field input:focus {
+    border-color: #ff3380;
+    box-shadow: 0 0 12px rgba(255,51,128,0.5);
+  }
+
+  .auth-btn {
+    width: 100%; border: 0;
+    background: linear-gradient(180deg, #ff3380, #c01060);
+    color: #fff; padding: 14px;
+    font-family: 'Press Start 2P', monospace; font-size: 0.85rem;
+    letter-spacing: 2px; cursor: pointer;
+    border-radius: 0;
+    box-shadow: 0 4px 0 #6010a0, 0 0 20px rgba(255,51,128,0.5);
+    transition: all 0.1s;
+    margin-top: 6px;
+  }
+  .auth-btn:active {
+    transform: translateY(2px);
+    box-shadow: 0 2px 0 #6010a0, 0 0 12px rgba(255,51,128,0.5);
+  }
+  .auth-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .auth-msg {
+    text-align: center; margin-top: 14px;
+    font-size: 1rem; min-height: 22px;
+    letter-spacing: 1px;
+  }
+  .auth-msg.error { color: #ff80a0; }
+  .auth-msg.success { color: #80ffc0; }
+
+  /* Game screen */
+  .game-screen {
+    position: fixed; inset: 0; z-index: 1;
+    display: none;
+  }
+  .game-screen.active { display: block; }
+
+  #gameCanvas {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    display: block; touch-action: none;
+  }
+
+  /* Minimal HUD */
+  .hud {
+    position: absolute; inset: 0; pointer-events: none; z-index: 10;
+  }
+  .hud-corner {
+    position: absolute; padding: 10px 14px;
+    background: rgba(5, 1, 15, 0.55);
+    border: 1px solid rgba(255,51,128,0.35);
+    color: #ffeb80;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 1.5px;
+    backdrop-filter: blur(4px);
+  }
+  .hud-tl { top: 12px; left: 12px; }
+  .hud-tr { top: 12px; right: 12px; text-align: right; }
+  .hud-label {
+    color: #80c0ff; font-size: 0.55rem;
+    margin-bottom: 3px; letter-spacing: 2px;
+  }
+  .hud-value { font-size: 0.85rem; }
+
+  .signout-btn {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    background: rgba(5, 1, 15, 0.55);
+    border: 1px solid rgba(128, 192, 255, 0.35);
+    color: #80c0ff; padding: 8px 14px;
+    font-family: 'VT323', monospace; font-size: 1rem;
+    letter-spacing: 2px; cursor: pointer; pointer-events: auto;
+    text-transform: uppercase;
+    backdrop-filter: blur(4px);
+  }
+  .signout-btn:active { background: rgba(128, 192, 255, 0.2); }
+
+  /* Touch controls */
+  .touch-stick {
+    position: absolute; bottom: 30px; left: 30px;
+    width: 110px; height: 110px;
+    border: 2px solid rgba(255, 51, 128, 0.4);
+    border-radius: 50%;
+    background: rgba(5, 1, 15, 0.4);
+    pointer-events: auto;
+    backdrop-filter: blur(4px);
+  }
+  .touch-stick-knob {
+    position: absolute; top: 50%; left: 50%;
+    width: 50px; height: 50px;
+    margin: -25px 0 0 -25px;
+    background: radial-gradient(circle, #ff3380, #c01060);
+    border-radius: 50%;
+    box-shadow: 0 0 20px rgba(255,51,128,0.6);
+    pointer-events: none;
+    transition: transform 0.05s;
+  }
+  .boost-btn {
+    position: absolute; bottom: 50px; right: 35px;
+    width: 80px; height: 80px;
+    border: 2px solid rgba(128, 192, 255, 0.5);
+    background: radial-gradient(circle, rgba(128, 192, 255, 0.3), rgba(64, 96, 200, 0.15));
+    border-radius: 50%;
+    color: #80c0ff;
+    font-family: 'Press Start 2P', monospace; font-size: 0.6rem;
+    letter-spacing: 2px;
+    pointer-events: auto;
+    backdrop-filter: blur(4px);
+    cursor: pointer;
+  }
+  .boost-btn:active, .boost-btn.active {
+    background: radial-gradient(circle, rgba(255,235,128,0.5), rgba(255,51,128,0.3));
+    border-color: #ffeb80;
+    color: #fff;
+    box-shadow: 0 0 25px rgba(255,235,128,0.7);
+  }
+
+  /* Loading screen */
+  .loading {
+    position: fixed; inset: 0; z-index: 200;
+    display: flex; align-items: center; justify-content: center;
+    background: #05010f;
+    font-family: 'Press Start 2P', monospace;
+    color: #ffeb80; font-size: 0.9rem; letter-spacing: 3px;
+  }
+  .loading.hidden { display: none; }
+  .loading-text::after {
+    content: '...'; animation: dots 1s steps(4) infinite;
+  }
+  @keyframes dots {
+    0% { content: ''; }
+    25% { content: '.'; }
+    50% { content: '..'; }
+    75% { content: '...'; }
+  }
+
+  @media (max-width: 480px) {
+    .auth-title { font-size: 0.9rem; }
+    .hud-corner { font-size: 0.55rem; padding: 8px 10px; }
+    .hud-value { font-size: 0.75rem; }
+  }
+</style>
+</head>
+<body>
+
+<div class="loading" id="loadingScreen">
+  <div class="loading-text">INITIALIZING</div>
+</div>
+
+<!-- AUTH SCREEN -->
+<div class="auth-screen" id="authScreen">
+  <div class="auth-stars"></div>
+  <div class="auth-card">
+    <div class="auth-title">SHADER<br>PILOT</div>
+    <div class="auth-sub">// galaxy fighter //</div>
+
+    <div class="auth-tabs">
+      <button class="auth-tab active" data-tab="signin" type="button">Sign In</button>
+      <button class="auth-tab" data-tab="signup" type="button">Sign Up</button>
+    </div>
+
+    <form id="authForm">
+      <div class="field" id="callsignField" style="display:none;">
+        <label>Callsign</label>
+        <input type="text" id="callsignInput" maxlength="20" autocomplete="off">
+      </div>
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="emailInput" required autocomplete="email">
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="passwordInput" required minlength="6" autocomplete="current-password">
+      </div>
+      <button class="auth-btn" type="submit" id="authSubmit">ENGAGE</button>
+    </form>
+    <div class="auth-msg" id="authMsg"></div>
+  </div>
+</div>
+
+<!-- GAME SCREEN -->
+<div class="game-screen" id="gameScreen">
+  <canvas id="gameCanvas"></canvas>
+  <div class="hud">
+    <div class="hud-corner hud-tl">
+      <div class="hud-label">PILOT</div>
+      <div class="hud-value" id="hudCallsign">---</div>
+    </div>
+    <div class="hud-corner hud-tr">
+      <div class="hud-label">DIST / BEST</div>
+      <div class="hud-value"><span id="hudDist">0</span> / <span id="hudBest">0</span></div>
+    </div>
+    <button class="signout-btn" id="signoutBtn" type="button">Sign Out</button>
+    <div class="touch-stick" id="touchStick">
+      <div class="touch-stick-knob" id="stickKnob"></div>
+    </div>
+    <button class="boost-btn" id="boostBtn" type="button">BOOST</button>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+
+const SUPABASE_URL = 'https://xhhmxabftbyxrirvvihn.supabase.co';
+const SUPABASE_ANON = 'sb_publishable_NZHoIxqqpSvVBP8MrLHCYA_gmg1AbN-';
+const PILOTS_TABLE = 'uNMexs7BYTXQ2_shader_pilot_pilots';
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
+
+const els = {
+  loading: document.getElementById('loadingScreen'),
+  auth: document.getElementById('authScreen'),
+  game: document.getElementById('gameScreen'),
+  authForm: document.getElementById('authForm'),
+  authTabs: document.querySelectorAll('.auth-tab'),
+  authSubmit: document.getElementById('authSubmit'),
+  authMsg: document.getElementById('authMsg'),
+  callsignField: document.getElementById('callsignField'),
+  callsign: document.getElementById('callsignInput'),
+  email: document.getElementById('emailInput'),
+  password: document.getElementById('passwordInput'),
+  signout: document.getElementById('signoutBtn'),
+  hudCallsign: document.getElementById('hudCallsign'),
+  hudDist: document.getElementById('hudDist'),
+  hudBest: document.getElementById('hudBest'),
+  canvas: document.getElementById('gameCanvas'),
+  stick: document.getElementById('touchStick'),
+  knob: document.getElementById('stickKnob'),
+  boost: document.getElementById('boostBtn'),
+};
+
+let mode = 'signin';
+let currentUser = null;
+let currentPilot = null;
+let game = null;
+
+// === AUTH ===
+els.authTabs.forEach(tab => {
+  tab.addEventListener('click', () => {
+    els.authTabs.forEach(t => t.classList.toggle('active', t === tab));
+    mode = tab.dataset.tab;
+    els.callsignField.style.display = mode === 'signup' ? 'block' : 'none';
+    els.authSubmit.textContent = mode === 'signup' ? 'LAUNCH' : 'ENGAGE';
+    els.authMsg.textContent = '';
+    els.authMsg.className = 'auth-msg';
+  });
+});
+
+els.authForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  els.authSubmit.disabled = true;
+  els.authMsg.className = 'auth-msg';
+  els.authMsg.textContent = mode === 'signup' ? 'CREATING PILOT...' : 'AUTHENTICATING...';
+
+  try {
+    const email = els.email.value.trim();
+    const password = els.password.value;
+
+    if (mode === 'signup') {
+      const callsign = els.callsign.value.trim();
+      if (!callsign) throw new Error('Callsign required');
+      const { data, error } = await supabase.auth.signUp({
+        email, password,
+        options: { emailRedirectTo: 'https://sling-gogiapp.web.app/email-confirmed.html' }
+      });
+      if (error) throw error;
+      if (data.user) {
+        await supabase.from(PILOTS_TABLE).insert({ callsign, best_score: 0, best_distance: 0, runs_completed: 0 });
+      }
+      els.authMsg.className = 'auth-msg success';
+      els.authMsg.textContent = 'PILOT REGISTERED. CHECK EMAIL.';
+    } else {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      els.authMsg.className = 'auth-msg success';
+      els.authMsg.textContent = 'LAUNCHING...';
+    }
+  } catch (err) {
+    els.authMsg.className = 'auth-msg error';
+    els.authMsg.textContent = (err.message || 'AUTH FAILED').toUpperCase();
+  } finally {
+    els.authSubmit.disabled = false;
+  }
+});
+
+els.signout.addEventListener('click', async () => {
+  if (game) { game.stop(); game = null; }
+  await supabase.auth.signOut();
+});
+
+supabase.auth.onAuthStateChange(async (event, session) => {
+  els.loading.classList.add('hidden');
+  if (session && session.user) {
+    currentUser = session.user;
+    await loadPilot();
+    showGame();
+  } else {
+    currentUser = null;
+    currentPilot = null;
+    showAuth();
+  }
+});
+
+async function loadPilot() {
+  try {
+    const { data } = await supabase.from(PILOTS_TABLE).select('*').limit(1);
+    if (data && data.length) {
+      currentPilot = data[0];
+    } else {
+      const cs = (currentUser.email || 'PILOT').split('@')[0].toUpperCase().slice(0, 12);
+      const { data: ins } = await supabase.from(PILOTS_TABLE)
+        .insert({ callsign: cs, best_score: 0, best_distance: 0, runs_completed: 0 })
+        .select().single();
+      currentPilot = ins;
+    }
+  } catch (e) {
+    console.error('Pilot load error:', e.message);
+    currentPilot = { callsign: 'PILOT', best_distance: 0 };
+  }
+}
+
+function showAuth() {
+  els.game.classList.remove('active');
+  els.auth.style.display = 'flex';
+}
+function showGame() {
+  els.auth.style.display = 'none';
+  els.game.classList.add('active');
+  els.hudCallsign.textContent = (currentPilot?.callsign || 'PILOT').toUpperCase();
+  els.hudBest.textContent = Math.floor(currentPilot?.best_distance || 0);
+  if (!game) {
+    try {
+      game = new ShaderPilotGame();
+      game.start();
+    } catch (e) {
+      console.error('Game init error:', e.message, e.stack);
+    }
+  }
+}
+
+// === GAME ===
+class ShaderPilotGame {
+  constructor() {
+    this.canvas = els.canvas;
+    this.scene = new THREE.Scene();
+    this.scene.fog = new THREE.FogExp2(0x05010f, 0.012);
+
+    this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 800);
+
+    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: false, alpha: false });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setClearColor(0x05010f);
+
+    this.input = { x: 0, y: 0, boost: false };
+    this.keys = {};
+
+    this.shipPos = new THREE.Vector3(0, 0, 0);
+    this.shipVel = new THREE.Vector3(0, 0, 0);
+    this.shipRot = { pitch: 0, yaw: 0, roll: 0 };
+    this.distance = 0;
+    this.running = false;
+    this.lastSave = 0;
+
+    this.buildWorld();
+    this.bindControls();
+
+    window.addEventListener('resize', () => this.onResize());
+  }
+
+  buildWorld() {
+    // Stars - far background
+    const starGeo = new THREE.BufferGeometry();
+    const starCount = 1500;
+    const starPos = new Float32Array(starCount * 3);
+    const starCol = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount; i++) {
+      const r = 300 + Math.random() * 200;
+      const t = Math.random() * Math.PI * 2;
+      const p = Math.acos(2 * Math.random() - 1);
+      starPos[i*3]   = r * Math.sin(p) * Math.cos(t);
+      starPos[i*3+1] = r * Math.sin(p) * Math.sin(t);
+      starPos[i*3+2] = r * Math.cos(p);
+      const palette = Math.random();
+      if (palette < 0.5) { starCol[i*3]=1; starCol[i*3+1]=1; starCol[i*3+2]=1; }
+      else if (palette < 0.75) { starCol[i*3]=1; starCol[i*3+1]=0.5; starCol[i*3+2]=0.8; }
+      else { starCol[i*3]=0.5; starCol[i*3+1]=0.8; starCol[i*3+2]=1; }
+    }
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    starGeo.setAttribute('color', new THREE.BufferAttribute(starCol, 3));
+    this.stars = new THREE.Points(starGeo, new THREE.PointsMaterial({
+      size: 1.4, vertexColors: true, sizeAttenuation: false, transparent: true, opacity: 0.9
+    }));
+    this.scene.add(this.stars);
+
+    // Nebula clouds (large transparent sprites of color)
+    const nebulaCols = [0xff3380, 0x6020c0, 0x2080ff, 0xff8040];
+    this.nebulae = [];
+    for (let i = 0; i < 14; i++) {
+      const geo = new THREE.SphereGeometry(40 + Math.random() * 30, 8, 6);
+      const mat = new THREE.MeshBasicMaterial({
+        color: nebulaCols[i % nebulaCols.length],
+        transparent: true, opacity: 0.06,
+        side: THREE.BackSide, depthWrite: false
+      });
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(
+        (Math.random() - 0.5) * 200,
+        (Math.random() - 0.5) * 100,
+        -i * 80 - Math.random() * 100
+      );
+      this.scene.add(m);
+      this.nebulae.push(m);
+    }
+
+    // Asteroid / floating shape obstacles ahead in tunnel
+    this.obstacles = [];
+    const obsGeoms = [
+      new THREE.IcosahedronGeometry(2, 0),
+      new THREE.OctahedronGeometry(2.5, 0),
+      new THREE.TetrahedronGeometry(2.8, 0),
+      new THREE.DodecahedronGeometry(2.2, 0),
+    ];
+    for (let i = 0; i < 70; i++) {
+      const geo = obsGeoms[i % obsGeoms.length];
+      const hue = (i * 25) % 360;
+      const mat = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(`hsl(${hue}, 80%, 60%)`),
+        wireframe: true,
+        transparent: true, opacity: 0.85
+      });
+      const m = new THREE.Mesh(geo, mat);
+      const ang = Math.random() * Math.PI * 2;
+      const rad = 8 + Math.random() * 18;
+      m.position.set(
+        Math.cos(ang) * rad,
+        Math.sin(ang) * rad,
+        -30 - i * 25 - Math.random() * 15
+      );
+      m.userData.spin = {
+        x: (Math.random() - 0.5) * 0.02,
+        y: (Math.random() - 0.5) * 0.02,
+        z: (Math.random() - 0.5) * 0.02
+      };
+      m.userData.respawnZ = m.position.z;
+      this.scene.add(m);
+      this.obstacles.push(m);
+    }
+
+    // Tunnel rings to give sense of speed
+    this.rings = [];
+    for (let i = 0; i < 40; i++) {
+      const rg = new THREE.TorusGeometry(14, 0.18, 6, 32);
+      const rm = new THREE.MeshBasicMaterial({
+        color: i % 3 === 0 ? 0xff3380 : (i % 3 === 1 ? 0x80c0ff : 0xffeb80),
+        transparent: true, opacity: 0.5
+      });
+      const ring = new THREE.Mesh(rg, rm);
+      ring.position.z = -i * 30;
+      this.scene.add(ring);
+      this.rings.push(ring);
+    }
+
+    // Grid floor (retro vibe)
+    const gridGeo = new THREE.PlaneGeometry(400, 2000, 40, 200);
+    const gridMat = new THREE.MeshBasicMaterial({
+      color: 0xff3380, wireframe: true, transparent: true, opacity: 0.18
+    });
+    this.grid = new THREE.Mesh(gridGeo, gridMat);
+    this.grid.rotation.x = -Math.PI / 2;
+    this.grid.position.y = -25;
+    this.grid.position.z = -500;
+    this.scene.add(this.grid);
+
+    const gridGeo2 = new THREE.PlaneGeometry(400, 2000, 40, 200);
+    const gridMat2 = new THREE.MeshBasicMaterial({
+      color: 0x80c0ff, wireframe: true, transparent: true, opacity: 0.15
+    });
+    this.gridTop = new THREE.Mesh(gridGeo2, gridMat2);
+    this.gridTop.rotation.x = Math.PI / 2;
+    this.gridTop.position.y = 25;
+    this.gridTop.position.z = -500;
+    this.scene.add(this.gridTop);
+
+    // Build the ship
+    this.buildShip();
+  }
+
+  buildShip() {
+    const ship = new THREE.Group();
+
+    // Main body - elongated triangular fighter
+    const bodyGeo = new THREE.ConeGeometry(0.45, 1.6, 4);
+    bodyGeo.rotateX(Math.PI / 2);
+    const bodyMat = new THREE.MeshBasicMaterial({ color: 0xff3380 });
+    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    ship.add(body);
+
+    // Wireframe overlay for retro vibe
+    const wireMat = new THREE.MeshBasicMaterial({ color: 0xffeb80, wireframe: true });
+    const wireBody = new THREE.Mesh(bodyGeo, wireMat);
+    wireBody.scale.setScalar(1.02);
+    ship.add(wireBody);
+
+    // Wings
+    const wingGeo = new THREE.BoxGeometry(1.6, 0.08, 0.5);
+    const wingMat = new THREE.MeshBasicMaterial({ color: 0x80c0ff });
+    const wing = new THREE.Mesh(wingGeo, wingMat);
+    wing.position.z = 0.2;
+    ship.add(wing);
+    const wireWing = new THREE.Mesh(wingGeo, wireMat);
+    wireWing.position.z = 0.2;
+    wireWing.scale.setScalar(1.05);
+    ship.add(wireWing);
+
+    // Engine glow
+    const glowGeo = new THREE.SphereGeometry(0.25, 8, 6);
+    const glowMat = new THREE.MeshBasicMaterial({ color: 0xffeb80, transparent: true, opacity: 0.85 });
+    const glow = new THREE.Mesh(glowGeo, glowMat);
+    glow.position.z = 0.85;
+    ship.add(glow);
+    this.engineGlow = glow;
+
+    this.ship = ship;
+    this.scene.add(ship);
+  }
+
+  bindControls() {
+    // Keyboard
+    window.addEventListener('keydown', (e) => {
+      this.keys[e.key.toLowerCase()] = true;
+      if (e.key === ' ') this.input.boost = true;
+    });
+    window.addEventListener('keyup', (e) => {
+      this.keys[e.key.toLowerCase()] = false;
+      if (e.key === ' ') this.input.boost = false;
+    });
+
+    // Touch joystick
+    let touchId = null;
+    let baseRect = null;
+
+    const stickStart = (e) => {
+      e.preventDefault();
+      const t = e.touches ? e.touches[0] : e;
+      touchId = e.touches ? t.identifier : 'mouse';
+      baseRect = els.stick.getBoundingClientRect();
+      stickMove(e);
+    };
+    const stickMove = (e) => {
+      if (touchId === null) return;
+      e.preventDefault();
+      let t;
+      if (e.touches) {
+        for (const tc of e.touches) if (tc.identifier === touchId) { t = tc; break; }
+        if (!t) return;
+      } else { t = e; }
+      const cx = baseRect.left + baseRect.width / 2;
+      const cy = baseRect.top + baseRect.height / 2;
+      let dx = t.clientX - cx;
+      let dy = t.clientY - cy;
+      const max = baseRect.width / 2 - 10;
+      const len = Math.hypot(dx, dy);
+      if (len > max) { dx = dx / len * max; dy = dy / len * max; }
+      els.knob.style.transform = `translate(${dx}px, ${dy}px)`;
+      this.input.x = dx / max;
+      this.input.y = dy / max;
+    };
+    const stickEnd = () => {
+      touchId = null;
+      els.knob.style.transform = 'translate(0, 0)';
+      this.input.x = 0;
+      this.input.y = 0;
+    };
+
+    els.stick.addEventListener('touchstart', stickStart, { passive: false });
+    window.addEventListener('touchmove', stickMove, { passive: false });
+    window.addEventListener('touchend', stickEnd);
+    window.addEventListener('touchcancel', stickEnd);
+    els.stick.addEventListener('mousedown', stickStart);
+    window.addEventListener('mousemove', (e) => { if (touchId === 'mouse') stickMove(e); });
+    window.addEventListener('mouseup', stickEnd);
+
+    // Boost button
+    const boostOn = (e) => { e.preventDefault(); this.input.boost = true; els.boost.classList.add('active'); };
+    const boostOff = (e) => { e.preventDefault(); this.input.boost = false; els.boost.classList.remove('active'); };
+    els.boost.addEventListener('touchstart', boostOn, { passive: false });
+    els.boost.addEventListener('touchend', boostOff);
+    els.boost.addEventListener('mousedown', boostOn);
+    els.boost.addEventListener('mouseup', boostOff);
+    els.boost.addEventListener('mouseleave', boostOff);
+  }
+
+  onResize() {
+    this.camera.aspect = window.innerWidth / window.innerHeight;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  start() {
+    this.running = true;
+    this.lastTime = performance.now();
+    this.loop();
+  }
+  stop() {
+    this.running = false;
+    if (this.rafId) cancelAnimationFrame(this.rafId);
+  }
+
+  loop = () => {
+    if (!this.running) return;
+    try {
+      const now = performance.now();
+      const dt = Math.min(0.05, (now - this.lastTime) / 1000);
+      this.lastTime = now;
+      this.update(dt);
+      this.renderer.render(this.scene, this.camera);
+    } catch (e) {
+      console.error('Loop error:', e.message, e.stack);
+      this.running = false;
+      return;
+    }
+    this.rafId = requestAnimationFrame(this.loop);
+  };
+
+  update(dt) {
+    // Keyboard input
+    let kx = 0, ky = 0;
+    if (this.keys['arrowleft'] || this.keys['a']) kx -= 1;
+    if (this.keys['arrowright'] || this.keys['d']) kx += 1;
+    if (this.keys['arrowup'] || this.keys['w']) ky -= 1;
+    if (this.keys['arrowdown'] || this.keys['s']) ky += 1;
+    const ix = this.input.x || kx;
+    const iy = this.input.y || ky;
+    const boost = this.input.boost || this.keys[' '] || this.keys['shift'];
+
+    // Ship movement
+    const accel = 60;
+    this.shipVel.x += ix * accel * dt;
+    this.shipVel.y += -iy * accel * dt;
+    this.shipVel.x *= 0.92;
+    this.shipVel.y *= 0.92;
+
+    this.shipPos.x += this.shipVel.x * dt;
+    this.shipPos.y += this.shipVel.y * dt;
+    this.shipPos.x = Math.max(-18, Math.min(18, this.shipPos.x));
+    this.shipPos.y = Math.max(-18, Math.min(18, this.shipPos.y));
+
+    // Forward speed
+    const baseSpeed = 35;
+    const speed = boost ? baseSpeed * 1.9 : baseSpeed;
+    this.distance += speed * dt;
+
+    // Ship rotation based on input
+    this.shipRot.roll += (-ix * 0.6 - this.shipRot.roll) * 0.1;
+    this.shipRot.pitch += (-iy * 0.3 - this.shipRot.pitch) * 0.1;
+    this.shipRot.yaw += (ix * 0.3 - this.shipRot.yaw) * 0.1;
+
+    this.ship.position.set(this.shipPos.x, this.shipPos.y, -3);
+    this.ship.rotation.set(this.shipRot.pitch, Math.PI + this.shipRot.yaw, this.shipRot.roll);
+
+    // Engine glow pulse
+    this.engineGlow.scale.setScalar(boost ? 1.6 + Math.sin(performance.now() * 0.03) * 0.2 : 1.0);
+    this.engineGlow.material.color.setHex(boost ? 0x80c0ff : 0xffeb80);
+
+    // Camera follows ship
+    const camTargetX = this.shipPos.x * 0.3;
+    const camTargetY = this.shipPos.y * 0.3 + 1;
+    this.camera.position.x += (camTargetX - this.camera.position.x) * 0.1;
+    this.camera.position.y += (camTargetY - this.camera.position.y) * 0.1;
+    this.camera.position.z = 5;
+    this.camera.lookAt(this.shipPos.x * 0.5, this.shipPos.y * 0.5, -10);
+
+    // Move world toward camera
+    const moveDist = speed * dt;
+    this.obstacles.forEach((o) => {
+      o.position.z += moveDist;
+      o.rotation.x += o.userData.spin.x;
+      o.rotation.y += o.userData.spin.y;
+      o.rotation.z += o.userData.spin.z;
+      if (o.position.z > 10) {
+        const ang = Math.random() * Math.PI * 2;
+        const rad = 8 + Math.random() * 18;
+        o.position.x = Math.cos(ang) * rad;
+        o.position.y = Math.sin(ang) * rad;
+        o.position.z -= 70 * 25 + Math.random() * 200;
+      }
+    });
+    this.rings.forEach((r) => {
+      r.position.z += moveDist;
+      r.rotation.z += 0.005;
+      if (r.position.z > 10) r.position.z -= 40 * 30;
+    });
+    this.nebulae.forEach((n) => {
+      n.position.z += moveDist * 0.3;
+      if (n.position.z > 50) n.position.z -= 14 * 80 + 200;
+    });
+
+    // Grid scrolls
+    this.grid.position.z += moveDist;
+    if (this.grid.position.z > -100) this.grid.position.z -= 1000;
+    this.gridTop.position.z += moveDist;
+    if (this.gridTop.position.z > -100) this.gridTop.position.z -= 1000;
+
+    // HUD update
+    els.hudDist.textContent = Math.floor(this.distance);
+
+    // Save best every 3s
+    if (performance.now() - this.lastSave > 3000) {
+      this.lastSave = performance.now();
+      this.saveBest();
+    }
+  }
+
+  async saveBest() {
+    if (!currentPilot || this.distance <= (currentPilot.best_distance || 0)) return;
+    try {
+      currentPilot.best_distance = this.distance;
+      els.hudBest.textContent = Math.floor(this.distance);
+      await supabase.from(PILOTS_TABLE)
+        .update({ best_distance: this.distance })
+        .eq('id', currentPilot.id);
+    } catch (e) {
+      console.error('Save error:', e.message);
+    }
+  }
+}
+
+// Boot
+(async () => {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    els.loading.classList.add('hidden');
+    if (session && session.user) {
+      currentUser = session.user;
+      await loadPilot();
+      showGame();
+    } else {
+      showAuth();
+    }
+  } catch (e) {
+    console.error('Boot error:', e.message);
+    els.loading.classList.add('hidden');
+    showAuth();
+  }
+})();
+</script>
+</body>
+</html>
