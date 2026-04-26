@@ -131,6 +131,7 @@
       <div class="hp-bar"><div class="hp-fill" id="hpFill"></div></div>
     </div>
     <div class="hud-card hud-right">
+      <div class="hud-row"><span class="hud-label">PTS</span><span id="hudPoints">0</span></div>
       <div class="hud-row"><span class="hud-label">DIST</span><span id="hudDist">0</span></div>
       <div class="hud-row"><span class="hud-label">KILLS</span><span id="hudKills">0</span></div>
       <div class="hud-row"><span class="hud-label">CR</span><span id="hudCredits">0</span></div>
@@ -177,10 +178,12 @@
     <div class="menu-title" style="color:#ff80a0">SHIP DESTROYED</div>
     <div class="menu-sub">// run complete //</div>
     <div class="stats">
+      <div class="stat">POINTS<strong id="goPoints">0</strong></div>
       <div class="stat">DIST<strong id="goDist">0</strong></div>
       <div class="stat">KILLS<strong id="goKills">0</strong></div>
       <div class="stat">CREDITS<strong id="goCredits">0</strong></div>
-      <div class="stat">BEST<strong id="goBest">0</strong></div>
+      <div class="stat">BEST DIST<strong id="goBest">0</strong></div>
+      <div class="stat">BEST PTS<strong id="goBestScore">0</strong></div>
     </div>
     <button class="menu-btn success" id="restartBtn" type="button">Relaunch</button>
     <button class="menu-btn secondary" id="gameOverWeapons" type="button">Open Weapons</button>
@@ -213,9 +216,9 @@ const WEAPONS = {
 const els = {
   loading: document.getElementById('loading'), toast: document.getElementById('toast'), auth: document.getElementById('authScreen'), game: document.getElementById('gameScreen'),
   authForm: document.getElementById('authForm'), authTabs: document.querySelectorAll('[data-tab]'), callsignField: document.getElementById('callsignField'), callsign: document.getElementById('callsignInput'), email: document.getElementById('emailInput'), password: document.getElementById('passwordInput'), authSubmit: document.getElementById('authSubmit'), authMsg: document.getElementById('authMsg'),
-  canvas: document.getElementById('gameCanvas'), hudCallsign: document.getElementById('hudCallsign'), hudShip: document.getElementById('hudShip'), hudDist: document.getElementById('hudDist'), hudKills: document.getElementById('hudKills'), hudCredits: document.getElementById('hudCredits'), hpFill: document.getElementById('hpFill'), weaponReadout: document.getElementById('weaponReadout'),
+  canvas: document.getElementById('gameCanvas'), hudCallsign: document.getElementById('hudCallsign'), hudShip: document.getElementById('hudShip'), hudPoints: document.getElementById('hudPoints'), hudDist: document.getElementById('hudDist'), hudKills: document.getElementById('hudKills'), hudCredits: document.getElementById('hudCredits'), hpFill: document.getElementById('hpFill'), weaponReadout: document.getElementById('weaponReadout'),
   signout: document.getElementById('signoutBtn'), fire: document.getElementById('fireBtn'), boost: document.getElementById('boostBtn'), weaponsBtn: document.getElementById('weaponsBtn'), weaponsMenu: document.getElementById('weaponsMenu'), weaponsContent: document.getElementById('weaponsContent'), weaponsClose: document.getElementById('weaponsClose'),
-  hangarBtn: document.getElementById('hangarBtn'), hangarMenu: document.getElementById('hangarMenu'), hangarContent: document.getElementById('hangarContent'), hangarClose: document.getElementById('hangarClose'), gameOver: document.getElementById('gameOverMenu'), restart: document.getElementById('restartBtn'), gameOverWeapons: document.getElementById('gameOverWeapons'), goDist: document.getElementById('goDist'), goKills: document.getElementById('goKills'), goCredits: document.getElementById('goCredits'), goBest: document.getElementById('goBest')
+  hangarBtn: document.getElementById('hangarBtn'), hangarMenu: document.getElementById('hangarMenu'), hangarContent: document.getElementById('hangarContent'), hangarClose: document.getElementById('hangarClose'), gameOver: document.getElementById('gameOverMenu'), restart: document.getElementById('restartBtn'), gameOverWeapons: document.getElementById('gameOverWeapons'), goPoints: document.getElementById('goPoints'), goDist: document.getElementById('goDist'), goKills: document.getElementById('goKills'), goCredits: document.getElementById('goCredits'), goBest: document.getElementById('goBest'), goBestScore: document.getElementById('goBestScore')
 };
 
 let authMode = 'signin';
@@ -262,10 +265,11 @@ async function loadPilot() {
     if (!currentPilot.active_ship) currentPilot.active_ship = 'striker';
     if (!currentPilot.upgrades) currentPilot.upgrades = {};
     if (currentPilot.credits == null) currentPilot.credits = 500;
+    if (currentPilot.best_score == null) currentPilot.best_score = 0;
     weaponState();
   } catch (err) {
     console.error('Pilot load error:', err.message);
-    currentPilot = { callsign: 'PILOT', best_distance: 0, credits: 500, kills: 0, active_ship: 'striker', owned_ships: ['striker'], upgrades: { weapons: defaultWeapons() } };
+    currentPilot = { callsign: 'PILOT', best_score: 0, best_distance: 0, credits: 500, kills: 0, active_ship: 'striker', owned_ships: ['striker'], upgrades: { weapons: defaultWeapons() } };
   }
 }
 
@@ -274,6 +278,7 @@ function updateHud() {
   const weapon = activeWeapon();
   els.hudCallsign.textContent = (currentPilot?.callsign || 'PILOT').toUpperCase();
   els.hudShip.textContent = ship.name;
+  els.hudPoints.textContent = game && !game.dead ? game.runPoints || 0 : currentPilot?.best_score || 0;
   els.hudCredits.textContent = currentPilot?.credits || 0;
   els.hudKills.textContent = currentPilot?.kills || 0;
   els.weaponReadout.innerHTML = `WEAPON: <strong>${weapon.name}</strong> <span style="color:${weapon.color}">◆</span>`;
@@ -383,7 +388,7 @@ class ShaderPilotGame {
     this.input = { fire:false, boost:false };
     this.player = { x: 0, y: 0, vx: 0, vy: 0, hp: 100, maxHp: 100 };
     this.stars = []; this.lasers = []; this.enemyLasers = []; this.enemies = []; this.particles = [];
-    this.distance = 0; this.runKills = 0; this.runCredits = 0; this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.dead = false; this.running = false;
+    this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.dead = false; this.running = false;
     this.resize(); this.createStars(); this.applyShip(); this.bindControls();
     window.addEventListener('resize', () => this.resize());
   }
@@ -400,7 +405,7 @@ class ShaderPilotGame {
   }
   start() { this.running = true; this.last = performance.now(); for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160); this.loop(); }
   stop() { this.running = false; cancelAnimationFrame(this.raf); }
-  respawn() { this.dead = false; this.distance = 0; this.runKills = 0; this.runCredits = 0; this.lasers=[]; this.enemyLasers=[]; this.enemies=[]; this.particles=[]; this.player.x=this.w*.22; this.player.y=this.h*.5; this.applyShip(); for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160); updateHud(); }
+  respawn() { this.dead = false; this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lasers=[]; this.enemyLasers=[]; this.enemies=[]; this.particles=[]; this.player.x=this.w*.22; this.player.y=this.h*.5; this.applyShip(); for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160); updateHud(); }
   loop = () => { if (!this.running) return; try { const now=performance.now(); const dt=Math.min(.05,(now-this.last)/1000); this.last=now; this.update(dt); this.draw(); } catch(err) { console.error('Game loop error:', err.message, err.stack); } this.raf=requestAnimationFrame(this.loop); }
   update(dt) {
     if (this.dead) { this.updateParticles(dt); return; }
@@ -413,12 +418,13 @@ class ShaderPilotGame {
     this.player.vx *= .86; this.player.vy *= .86;
     this.player.x = Math.max(46, Math.min(this.w-58, this.player.x + this.player.vx*dt));
     this.player.y = Math.max(64, Math.min(this.h-64, this.player.y + this.player.vy*dt));
-    this.distance += speed * dt * .08; els.hudDist.textContent = Math.floor(this.distance); els.hudKills.textContent = (currentPilot.kills||0) + this.runKills;
+    this.distance += speed * dt * .08; this.updatePoints(); els.hudDist.textContent = Math.floor(this.distance); els.hudKills.textContent = (currentPilot.kills||0) + this.runKills; els.hudPoints.textContent = this.runPoints;
     if (this.input.fire || this.keys.z || this.keys.j || this.keys.k) this.fireWeapon();
     this.spawnTimer -= dt; if (this.spawnTimer <= 0) { this.spawnEnemy(this.w + 80); this.spawnTimer = Math.max(.45, 1.2 - this.distance/1200); }
     this.updateStars(dt, speed); this.updateLasers(dt); this.updateEnemies(dt); this.updateParticles(dt);
     this.saveTimer += dt; if (this.saveTimer > 3) { this.saveTimer = 0; this.saveBest(); }
   }
+  updatePoints() { this.runPoints = Math.floor(this.distance * 4) + this.runKills * 150 + this.runCredits; }
   fireWeapon() {
     const weapon = activeWeapon(); const now = performance.now()/1000;
     if (now - this.lastFire < weapon.cooldown) return;
@@ -455,7 +461,7 @@ class ShaderPilotGame {
     }
   }
   splashDamage(x,y,r,dmg) { for (let j=this.enemies.length-1;j>=0;j--) { const e=this.enemies[j]; if (Math.hypot(e.x-x,e.y-y) < r+e.r) { e.hp -= dmg; if (e.hp <= 0) this.killEnemy(j); } } }
-  killEnemy(index) { const e=this.enemies[index]; this.burst(e.x,e.y,'#ff405c',22); this.enemies.splice(index,1); this.runKills++; this.runCredits += 25; }
+  killEnemy(index) { const e=this.enemies[index]; this.burst(e.x,e.y,'#ff405c',22); this.enemies.splice(index,1); this.runKills++; this.runCredits += 25; this.updatePoints(); els.hudPoints.textContent = this.runPoints; }
   updateEnemies(dt) {
     for (let i=this.enemies.length-1;i>=0;i--) {
       const e=this.enemies[i]; e.phase += dt*2; e.x -= e.speed*dt; e.y += Math.sin(e.phase)*35*dt; e.fire -= dt;
@@ -469,20 +475,21 @@ class ShaderPilotGame {
   takeDamage(amount) { if (this.dead) return; this.player.hp -= amount; this.updateHp(); if (this.player.hp <= 0) this.die(); }
   updateHp() { els.hpFill.style.width = Math.max(0, this.player.hp / this.player.maxHp * 100) + '%'; }
   die() { this.dead = true; this.burst(this.player.x,this.player.y,'#ff3380',42); setTimeout(() => this.endRun(), 650); }
-  async endRun() { const patch = { credits: (currentPilot.credits||0) + this.runCredits, kills: (currentPilot.kills||0) + this.runKills, runs_completed: (currentPilot.runs_completed||0)+1 }; if (this.distance > (currentPilot.best_distance||0)) patch.best_distance = this.distance; await savePilotPartial(patch); updateHud(); els.goDist.textContent=Math.floor(this.distance); els.goKills.textContent=this.runKills; els.goCredits.textContent='+'+this.runCredits; els.goBest.textContent=Math.floor(currentPilot.best_distance||0); els.gameOver.classList.add('active'); }
-  async saveBest() { if (this.distance <= (currentPilot.best_distance||0)) return; currentPilot.best_distance = this.distance; try { await supabase.from(PILOTS_TABLE).update({ best_distance: this.distance }).eq('id', currentPilot.id); } catch(e) { console.error('Best save error:', e.message); } }
+  async endRun() { this.updatePoints(); const newBest = this.runPoints > (currentPilot.best_score||0); const patch = { credits: (currentPilot.credits||0) + this.runCredits, kills: (currentPilot.kills||0) + this.runKills, runs_completed: (currentPilot.runs_completed||0)+1 }; if (this.distance > (currentPilot.best_distance||0)) patch.best_distance = this.distance; if (newBest) patch.best_score = this.runPoints; await savePilotPartial(patch); updateHud(); if (newBest) showToast('NEW HIGH POINTS'); els.goPoints.textContent=this.runPoints; els.goDist.textContent=Math.floor(this.distance); els.goKills.textContent=this.runKills; els.goCredits.textContent='+'+this.runCredits; els.goBest.textContent=Math.floor(currentPilot.best_distance||0); els.goBestScore.textContent=Math.floor(currentPilot.best_score||0); els.gameOver.classList.add('active'); }
+  async saveBest() { const patch = {}; if (this.distance > (currentPilot.best_distance||0)) { currentPilot.best_distance = this.distance; patch.best_distance = this.distance; } if (this.runPoints > (currentPilot.best_score||0)) { currentPilot.best_score = this.runPoints; patch.best_score = this.runPoints; } if (!Object.keys(patch).length) return; try { await supabase.from(PILOTS_TABLE).update(patch).eq('id', currentPilot.id); } catch(e) { console.error('Best save error:', e.message); } }
   draw() {
     const ctx=this.ctx; ctx.clearRect(0,0,this.w,this.h);
     const g=ctx.createLinearGradient(0,0,this.w,this.h); g.addColorStop(0,'#090521'); g.addColorStop(.48,'#110835'); g.addColorStop(1,'#04010b'); ctx.fillStyle=g; ctx.fillRect(0,0,this.w,this.h);
     ctx.save(); this.stars.forEach(s => { ctx.globalAlpha=Math.min(1,s.z*.8); ctx.fillStyle=s.color; ctx.fillRect(s.x,s.y,Math.max(1,s.z*2),Math.max(1,s.z*2)); }); ctx.restore();
     ctx.strokeStyle='rgba(255,51,128,.18)'; ctx.lineWidth=1; const offset=(this.distance*18)%48; for(let x=-offset;x<this.w;x+=48){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x+this.w*.25,this.h);ctx.stroke();}
-    this.drawShip(); this.enemies.forEach(e=>this.drawEnemy(e)); this.drawLasers(); this.drawParticles();
+    this.drawShip(); this.enemies.forEach(e=>this.drawEnemy(e)); this.drawLasers(); this.drawParticles(); this.drawPointPopups();
     if (this.dead) { ctx.fillStyle='rgba(0,0,0,.25)'; ctx.fillRect(0,0,this.w,this.h); }
   }
   drawShip() { const ctx=this.ctx, p=this.player; ctx.save(); ctx.translate(p.x,p.y); ctx.shadowBlur=20; ctx.shadowColor=this.ship.color; ctx.fillStyle=this.ship.color; ctx.beginPath(); ctx.moveTo(30,0); ctx.lineTo(-20,-18); ctx.lineTo(-9,0); ctx.lineTo(-20,18); ctx.closePath(); ctx.fill(); ctx.strokeStyle=this.ship.accent; ctx.lineWidth=2; ctx.stroke(); ctx.fillStyle=this.ship.accent; ctx.fillRect(-18,-4,18,8); ctx.restore(); }
   drawEnemy(e) { const ctx=this.ctx; ctx.save(); ctx.translate(e.x,e.y); ctx.rotate(e.phase*.8); ctx.shadowBlur=16; ctx.shadowColor=e.color; ctx.strokeStyle=e.color; ctx.fillStyle='rgba(255,64,80,.18)'; ctx.lineWidth=2; ctx.beginPath(); for(let i=0;i<6;i++){ const a=i*Math.PI/3; const r=i%2?e.r*.65:e.r; const x=Math.cos(a)*r, y=Math.sin(a)*r; if(i===0)ctx.moveTo(x,y); else ctx.lineTo(x,y); } ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore(); ctx.fillStyle='#ffeb80'; ctx.fillRect(e.x-e.r, e.y-e.r-9, (e.hp/e.maxHp)*e.r*2, 3); }
   drawLasers() { const ctx=this.ctx; ctx.lineCap='round'; this.lasers.forEach(l=>{ ctx.save(); ctx.shadowBlur=20; ctx.shadowColor=l.glow; l.trail.forEach((t,i)=>{ if(i===0)return; const a=i/l.trail.length; ctx.strokeStyle=l.color; ctx.globalAlpha=a*.45; ctx.lineWidth=l.width*a; ctx.beginPath(); ctx.moveTo(l.trail[i-1].x,l.trail[i-1].y); ctx.lineTo(t.x,t.y); ctx.stroke(); }); ctx.globalAlpha=1; ctx.strokeStyle=l.color; ctx.lineWidth=l.width; ctx.beginPath(); ctx.moveTo(l.x-l.width*3,l.y); ctx.lineTo(l.x+l.width*3,l.y); ctx.stroke(); if(l.splash){ctx.fillStyle=l.color;ctx.beginPath();ctx.arc(l.x,l.y,l.width*.9,0,Math.PI*2);ctx.fill();} ctx.restore(); }); this.enemyLasers.forEach(l=>{ ctx.save(); ctx.shadowBlur=12; ctx.shadowColor='#ff4040'; ctx.strokeStyle='#ff4040'; ctx.lineWidth=5; ctx.beginPath(); ctx.moveTo(l.x+10,l.y); ctx.lineTo(l.x-10,l.y); ctx.stroke(); ctx.restore(); }); }
   drawParticles() { const ctx=this.ctx; this.particles.forEach(p=>{ ctx.globalAlpha=Math.max(0,p.life*2); ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fill(); }); ctx.globalAlpha=1; }
+  drawPointPopups() { const ctx=this.ctx; ctx.save(); ctx.font='18px VT323, monospace'; ctx.textAlign='center'; ctx.fillStyle='#ffeb80'; this.particles.filter(p=>p.points).forEach(p=>ctx.fillText(p.points, p.x, p.y)); ctx.restore(); }
 }
 
 async function showGame() {
