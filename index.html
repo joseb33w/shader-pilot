@@ -226,6 +226,8 @@ let currentUser = null;
 let currentPilot = null;
 let game = null;
 let toastTimer = null;
+let authTransitioning = false;
+let activeSessionUserId = null;
 
 function showToast(msg) {
   els.toast.textContent = msg;
@@ -309,10 +311,10 @@ els.authForm.addEventListener('submit', async (event) => {
       els.authMsg.className = 'auth-msg success';
       els.authMsg.textContent = 'PILOT REGISTERED. CHECK EMAIL.';
     } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
-      els.authMsg.className = 'auth-msg success';
-      els.authMsg.textContent = 'LAUNCHING...';
+      if (!data?.session?.user) throw new Error('No active session returned');
+      await completeSignIn(data.session.user, 'LOADING PILOT...');
     }
   } catch (err) {
     els.authMsg.className = 'auth-msg error';
@@ -492,23 +494,60 @@ class ShaderPilotGame {
   drawPointPopups() { const ctx=this.ctx; ctx.save(); ctx.font='18px VT323, monospace'; ctx.textAlign='center'; ctx.fillStyle='#ffeb80'; this.particles.filter(p=>p.points).forEach(p=>ctx.fillText(p.points, p.x, p.y)); ctx.restore(); }
 }
 
+async function completeSignIn(user, statusText = 'LOADING PILOT...') {
+  if (!user) throw new Error('No signed-in user returned');
+  if (authTransitioning && activeSessionUserId === user.id) return;
+  authTransitioning = true;
+  activeSessionUserId = user.id;
+  els.loading.classList.add('hidden');
+  els.authMsg.className = 'auth-msg success';
+  els.authMsg.textContent = statusText;
+  try {
+    currentUser = user;
+    await loadPilot();
+    await showGame();
+    els.authMsg.textContent = '';
+    els.authMsg.className = 'auth-msg';
+  } catch (err) {
+    console.error('Sign-in transition error:', err.message, err.stack);
+    showAuth();
+    els.authMsg.className = 'auth-msg error';
+    els.authMsg.textContent = (err.message || 'LOGIN FAILED').toUpperCase();
+    throw err;
+  } finally {
+    authTransitioning = false;
+    els.authSubmit.disabled = false;
+  }
+}
+
 async function showGame() {
   els.auth.style.display = 'none'; els.game.classList.add('active'); updateHud();
   if (!game) { game = new ShaderPilotGame(els.canvas); game.start(); } else game.respawn();
 }
 function showAuth() { els.game.classList.remove('active'); els.auth.style.display = 'flex'; }
 
-supabase.auth.onAuthStateChange(async (_event, session) => {
+supabase.auth.onAuthStateChange((event, session) => {
   els.loading.classList.add('hidden');
-  if (session?.user) { currentUser = session.user; await loadPilot(); await showGame(); }
-  else { currentUser = null; currentPilot = null; showAuth(); }
+  if (event === 'SIGNED_OUT' || !session?.user) {
+    if (authTransitioning && session?.user) return;
+    currentUser = null;
+    currentPilot = null;
+    activeSessionUserId = null;
+    showAuth();
+    return;
+  }
+  if (event === 'SIGNED_IN' && activeSessionUserId !== session.user.id) {
+    setTimeout(() => {
+      completeSignIn(session.user, 'LOADING PILOT...').catch((err) => console.error('Auth state sign-in error:', err.message));
+    }, 0);
+  }
 });
 
 (async function boot() {
   try {
     const { data: { session } } = await supabase.auth.getSession();
     els.loading.classList.add('hidden');
-    if (session?.user) { currentUser = session.user; await loadPilot(); await showGame(); }
+    if (session?.user) await completeSignIn(session.user, 'RESTORING SESSION...');
     else showAuth();
   } catch (err) { console.error('Boot error:', err.message); els.loading.classList.add('hidden'); showAuth(); }
 })();
