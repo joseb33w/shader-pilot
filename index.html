@@ -13,7 +13,7 @@
   body::before { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 30; background: repeating-linear-gradient(0deg, rgba(0,0,0,.22) 0, rgba(0,0,0,.22) 1px, transparent 1px, transparent 4px); mix-blend-mode: multiply; }
   body::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 31; background: radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,.65) 100%); }
   button, input { font: inherit; }
-  button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  button { cursor: pointer; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: manipulation; }
 
   .loading, .auth-screen, .game-screen, .overlay, .toast { position: fixed; }
   .loading { inset: 0; z-index: 200; display: grid; place-items: center; background: #05010f; color: #ffeb80; font-family: 'Press Start 2P', monospace; font-size: .85rem; letter-spacing: 3px; }
@@ -42,6 +42,7 @@
   .game-screen.active { display: block; }
   canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   .hud { position: absolute; inset: 0; z-index: 10; pointer-events: none; }
+  .game-screen, .hud, .dpad, .controls, .control-btn, .dpad button { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: none; }
   .hud-card { position: absolute; top: 12px; padding: 8px 12px; min-width: 150px; background: rgba(5,1,15,.62); border: 1px solid rgba(255,51,128,.42); backdrop-filter: blur(6px); font-family: 'Press Start 2P', monospace; font-size: .56rem; letter-spacing: 1.5px; color: #ffeb80; }
   .hud-left { left: 12px; } .hud-right { right: 12px; text-align: right; }
   .hud-row { display: flex; gap: 8px; justify-content: space-between; margin: 3px 0; }
@@ -412,7 +413,26 @@ class ShaderPilotGame {
   bindControls() {
     window.addEventListener('keydown', e => { this.keys[e.key.toLowerCase()] = true; if ([' ','arrowup','arrowdown','arrowleft','arrowright'].includes(e.key.toLowerCase())) e.preventDefault(); });
     window.addEventListener('keyup', e => { this.keys[e.key.toLowerCase()] = false; });
-    const setHold = (el, on, off) => { const a = e => { e.preventDefault(); on(); }; const b = e => { e.preventDefault(); off(); }; el.addEventListener('pointerdown', a); el.addEventListener('pointerup', b); el.addEventListener('pointercancel', b); el.addEventListener('pointerleave', b); };
+    const setHold = (el, on, off) => {
+      const block = e => { e.preventDefault(); e.stopPropagation(); };
+      const a = e => {
+        block(e);
+        if (el.setPointerCapture && e.pointerId != null) { try { el.setPointerCapture(e.pointerId); } catch (_) {} }
+        on();
+      };
+      const b = e => {
+        block(e);
+        if (el.releasePointerCapture && e.pointerId != null) { try { el.releasePointerCapture(e.pointerId); } catch (_) {} }
+        off();
+      };
+      el.addEventListener('pointerdown', a, { passive: false });
+      el.addEventListener('pointerup', b, { passive: false });
+      el.addEventListener('pointercancel', b, { passive: false });
+      el.addEventListener('pointerleave', b, { passive: false });
+      el.addEventListener('contextmenu', block, { passive: false });
+      el.addEventListener('selectstart', block, { passive: false });
+      el.addEventListener('dragstart', block, { passive: false });
+    };
     setHold(els.fire, () => this.input.fire = true, () => this.input.fire = false);
     setHold(els.boost, () => this.input.boost = true, () => this.input.boost = false);
     document.querySelectorAll('[data-key]').forEach(btn => setHold(btn, () => this.touch[btn.dataset.key] = true, () => this.touch[btn.dataset.key] = false));
