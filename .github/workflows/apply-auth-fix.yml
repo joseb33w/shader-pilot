@@ -1,0 +1,65 @@
+name: Apply Auth Fix
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch Shader Pilot auth flow
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('index.html')
+          txt = path.read_text()
+          original = txt
+
+          helper = """function withTimeout(promise, ms, label) {\n  let timer;\n  const timeout = new Promise((_, reject) => {\n    timer = setTimeout(() => reject(new Error(`${label} timed out. Please try again.`)), ms);\n  });\n  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));\n}\n\n"""
+          if 'function withTimeout(promise, ms, label)' not in txt:
+            txt = txt.replace('function defaultWeapons() { return { owned: [\'pulse\'], active: \'pulse\', levels: {} }; }', helper + 'function defaultWeapons() { return { owned: [\'pulse\'], active: \'pulse\', levels: {} }; }')
+
+          txt = txt.replace(
+            "    const { data } = await supabase.from(PILOTS_TABLE).select('*').limit(1);",
+            "    const { data, error } = await withTimeout(supabase.from(PILOTS_TABLE).select('*').limit(1), 8000, 'Pilot lookup');\n    if (error) throw error;"
+          )
+          txt = txt.replace(
+            "      const { data: created } = await supabase.from(PILOTS_TABLE).insert({ callsign, email: currentUser.email, best_score: 0, best_distance: 0, runs_completed: 0, credits: 500, kills: 0, active_ship: 'striker', owned_ships: ['striker'], upgrades: { weapons: defaultWeapons() } }).select().single();",
+            "      const { data: created, error: createError } = await withTimeout(supabase.from(PILOTS_TABLE).insert({ callsign, email: currentUser.email, best_score: 0, best_distance: 0, runs_completed: 0, credits: 500, kills: 0, active_ship: 'striker', owned_ships: ['striker'], upgrades: { weapons: defaultWeapons() } }).select().single(), 8000, 'Pilot creation');\n      if (createError) throw createError;"
+          )
+          txt = txt.replace(
+            "      if (data.user) await supabase.from(PILOTS_TABLE).insert({ callsign, email, best_score: 0, best_distance: 0, runs_completed: 0, credits: 500, kills: 0, active_ship: 'striker', owned_ships: ['striker'], upgrades: { weapons: defaultWeapons() } });",
+            "      if (data.user) await withTimeout(supabase.from(PILOTS_TABLE).insert({ callsign, email, best_score: 0, best_distance: 0, runs_completed: 0, credits: 500, kills: 0, active_ship: 'striker', owned_ships: ['striker'], upgrades: { weapons: defaultWeapons() } }), 8000, 'Pilot registration');"
+          )
+          txt = txt.replace(
+            "      if (!data?.session?.user) throw new Error('No active session returned');\n      await completeSignIn(data.session.user, 'LOADING PILOT...');",
+            "      if (!data?.session?.user) throw new Error('No active session returned');\n      els.authMsg.className = 'auth-msg success';\n      els.authMsg.textContent = 'LOADING PILOT...';\n      await completeSignIn(data.session.user, 'LOADING PILOT...');"
+          )
+
+          old_listener = """supabase.auth.onAuthStateChange(async (_event, session) => {\n  els.loading.classList.add('hidden');\n  if (session?.user) {\n    currentUser = session.user;\n    await loadPilot();\n    await showGame();\n  } else {\n    currentUser = null;\n    currentPilot = null;\n    showAuth();\n  }\n});"""
+          new_listener = """supabase.auth.onAuthStateChange((event, session) => {\n  els.loading.classList.add('hidden');\n  if (event === 'SIGNED_OUT' || !session?.user) {\n    if (authTransitioning && session?.user) return;\n    currentUser = null;\n    currentPilot = null;\n    activeSessionUserId = null;\n    showAuth();\n    return;\n  }\n  if (event === 'SIGNED_IN' && activeSessionUserId !== session.user.id) {\n    setTimeout(() => {\n      completeSignIn(session.user, 'LOADING PILOT...').catch((err) => console.error('Auth state sign-in error:', err.message));\n    }, 0);\n  }\n});"""
+          if old_listener in txt:
+            txt = txt.replace(old_listener, new_listener)
+
+          if txt == original:
+            print('Auth flow already contained the direct login fix; no index.html changes required.')
+          else:
+            path.write_text(txt)
+            print('Patched index.html auth flow.')
+          PY
+      - name: Commit changes
+        run: |
+          if git diff --quiet; then
+            echo "No changes to commit"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add index.html
+            git commit -m "Fix Supabase sign-in transition"
+            git push
+          fi
