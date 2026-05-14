@@ -307,6 +307,15 @@ function resumeGameAfterOverlay() {
   game.paused = false;
   els.pauseBtn.classList.remove('active');
 }
+// Swap from one overlay directly to another without resuming the game in between.
+// Prevents stale-input / loop-restart hiccups that look like a freeze.
+function switchOverlay(closeEl, openFn) {
+  if (closeEl && closeEl.classList) closeEl.classList.remove('active');
+  // Keep game.paused = true; just clear any held inputs
+  clearGameInputs();
+  // Defer the open by a frame so the DOM commits the close first (smoother on iOS WebView)
+  requestAnimationFrame(() => { try { openFn(); } catch (e) { console.error('Overlay switch error:', e.message); } });
+}
 
 function openPauseMenu() {
   if (!game || game.dead) return;
@@ -333,25 +342,45 @@ function weaponState() {
 }
 function activeWeapon() { return WEAPONS[weaponState().active] || WEAPONS.pulse; }
 
+// Save with automatic retry on Supabase schema-cache hiccups (PGRST204 / "Could not find column")
 async function savePilotPartial(patch) {
   if (!currentPilot) return { ok: false, error: 'no pilot' };
+  // Snapshot previous values so we can roll back if the write fails
+  const previous = {};
+  for (const k of Object.keys(patch)) previous[k] = currentPilot[k];
   // Apply locally immediately so UI/game pick it up
   Object.assign(currentPilot, patch);
   if (!currentPilot.id) return { ok: true, local: true };
-  try {
+
+  const tryOnce = async () => {
     const { data, error } = await withTimeout(
       supabase.from(PILOTS_TABLE).update(patch).eq('id', currentPilot.id).select().single(),
       8000, 'Pilot save'
     );
     if (error) throw error;
-    // Merge server's authoritative values back in (in case of defaults/triggers)
-    if (data) Object.assign(currentPilot, data);
-    return { ok: true };
-  } catch (err) {
-    console.error('Pilot save error:', err.message || err);
-    showToast('SAVE FAILED — RETRYING');
-    return { ok: false, error: err.message || String(err) };
+    return data;
+  };
+
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const data = await tryOnce();
+      if (data) Object.assign(currentPilot, data);
+      return { ok: true };
+    } catch (err) {
+      lastErr = err;
+      const msg = (err && (err.message || err.toString())) || '';
+      // PGRST204 = schema cache hasn't refreshed yet after a column add. Wait and retry.
+      const isSchemaCache = /schema cache|PGRST204|Could not find the/i.test(msg);
+      if (!isSchemaCache) break;
+      await new Promise(r => setTimeout(r, 1200 * (attempt + 1)));
+    }
   }
+  // Roll back local state
+  for (const k of Object.keys(previous)) currentPilot[k] = previous[k];
+  console.error('Pilot save error:', lastErr?.message || lastErr);
+  showToast('SAVE FAILED');
+  return { ok: false, error: lastErr?.message || String(lastErr) };
 }
 
 async function loadPilot() {
@@ -369,6 +398,7 @@ async function loadPilot() {
     if (!currentPilot.active_ship) currentPilot.active_ship = 'striker';
     if (!currentPilot.upgrades) currentPilot.upgrades = {};
     if (currentPilot.credits == null) currentPilot.credits = 500;
+    if (currentPilot.kills == null) currentPilot.kills = 0;
     if (currentPilot.best_score == null) currentPilot.best_score = 0;
     weaponState();
   } catch (err) {
@@ -434,8 +464,8 @@ els.pauseBtn.addEventListener('click', () => {
   else openPauseMenu();
 });
 els.resumeBtn.addEventListener('click', () => closePauseMenu());
-els.pauseWeapons.addEventListener('click', () => { els.pauseMenu.classList.remove('active'); openWeapons(); });
-els.pauseHangar.addEventListener('click', () => { els.pauseMenu.classList.remove('active'); openHangar(); });
+els.pauseWeapons.addEventListener('click', () => switchOverlay(els.pauseMenu, openWeapons));
+els.pauseHangar.addEventListener('click', () => switchOverlay(els.pauseMenu, openHangar));
 els.pauseRestart.addEventListener('click', () => {
   els.pauseMenu.classList.remove('active');
   resumeGameAfterOverlay();
@@ -448,7 +478,8 @@ els.weaponsClose.addEventListener('click', () => { els.weaponsMenu.classList.rem
 els.hangarBtn.addEventListener('click', () => { openHangar(); });
 els.hangarClose.addEventListener('click', () => { els.hangarMenu.classList.remove('active'); resumeGameAfterOverlay(); });
 els.restart.addEventListener('click', () => { els.gameOver.classList.remove('active'); resumeGameAfterOverlay(); if (game) game.respawn(); });
-els.gameOverWeapons.addEventListener('click', () => { els.gameOver.classList.remove('active'); openWeapons(); });
+// Death -> Weapons: switch overlays without resuming (game is dead, must stay paused for menu)
+els.gameOverWeapons.addEventListener('click', () => switchOverlay(els.gameOver, openWeapons));
 
 // Keyboard: Escape closes overlays; P toggles pause
 window.addEventListener('keydown', (e) => {
@@ -458,7 +489,6 @@ window.addEventListener('keydown', (e) => {
     if (els.hangarMenu.classList.contains('active')) { els.hangarMenu.classList.remove('active'); resumeGameAfterOverlay(); return; }
   }
   if ((e.key === 'p' || e.key === 'P') && els.game.classList.contains('active') && !els.gameOver.classList.contains('active')) {
-    // Don't trigger when typing in inputs (none on game screen, but safe)
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
     if (els.pauseMenu.classList.contains('active')) closePauseMenu();
     else if (!anyOverlayOpen()) openPauseMenu();
@@ -488,7 +518,6 @@ function renderWeapons() {
     if (!weapon || currentPilot.credits < weapon.price) return;
     btn.disabled = true; btn.textContent = 'BUYING...';
     const currentWS = weaponState();
-    // Build a deep-cloned upgrades object so the JSONB column actually changes
     const nextUpgrades = JSON.parse(JSON.stringify(currentPilot.upgrades || {}));
     nextUpgrades.weapons = {
       owned: Array.from(new Set([...(currentWS.owned || []), key])),
@@ -499,22 +528,13 @@ function renderWeapons() {
       credits: currentPilot.credits - weapon.price,
       upgrades: nextUpgrades
     });
-    if (!result.ok) {
-      // Roll back local state on failure
-      currentPilot.credits += weapon.price;
-      const ws2 = weaponState();
-      ws2.owned = ws2.owned.filter(o => o !== key);
-      ws2.active = ws2.owned[0] || 'pulse';
-      showToast('PURCHASE FAILED');
-    } else {
-      showToast(`${weapon.name} PURCHASED`);
-    }
+    if (result.ok) showToast(`${weapon.name} PURCHASED`);
+    // savePilotPartial already rolled back local state on failure and toasted
     updateHud(); renderWeapons();
   }));
   els.weaponsContent.querySelectorAll('[data-select]').forEach(btn => btn.addEventListener('click', async () => {
     const key = btn.dataset.select;
     const currentWS = weaponState();
-    const prevActive = currentWS.active;
     const nextUpgrades = JSON.parse(JSON.stringify(currentPilot.upgrades || {}));
     nextUpgrades.weapons = {
       owned: currentWS.owned,
@@ -522,13 +542,7 @@ function renderWeapons() {
       levels: currentWS.levels || {}
     };
     const result = await savePilotPartial({ upgrades: nextUpgrades });
-    if (!result.ok) {
-      const ws2 = weaponState();
-      ws2.active = prevActive;
-      showToast('EQUIP FAILED');
-    } else {
-      showToast(`${WEAPONS[key].name} EQUIPPED`);
-    }
+    if (result.ok) showToast(`${WEAPONS[key].name} EQUIPPED`);
     updateHud(); renderWeapons();
   }));
 }
@@ -547,16 +561,15 @@ function renderHangar() {
   els.hangarContent.innerHTML = html;
   els.hangarContent.querySelectorAll('[data-equip]').forEach(btn => btn.addEventListener('click', async () => {
     const result = await savePilotPartial({ active_ship: btn.dataset.equip });
-    if (!result.ok) { showToast('EQUIP FAILED'); }
-    updateHud(); if (game) game.applyShip(); renderHangar();
+    if (result.ok) updateHud(), game && game.applyShip();
+    renderHangar();
   }));
   els.hangarContent.querySelectorAll('[data-shipbuy]').forEach(btn => btn.addEventListener('click', async () => {
     const key = btn.dataset.shipbuy; const ship = SHIPS[key];
     if (currentPilot.credits < ship.price) return;
     btn.disabled = true; btn.textContent = 'BUYING...';
     const result = await savePilotPartial({ credits: currentPilot.credits - ship.price, owned_ships: Array.from(new Set([...owned, key])), active_ship: key });
-    if (!result.ok) { currentPilot.credits += ship.price; showToast('PURCHASE FAILED'); }
-    else { showToast(`${ship.name} ACQUIRED`); }
+    if (result.ok) showToast(`${ship.name} ACQUIRED`);
     updateHud(); if (game) game.applyShip(); renderHangar();
   }));
 }
@@ -571,15 +584,12 @@ class ShaderPilotGame {
     this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.dead = false; this.running = false; this.paused = false;
     this.resize(); this.createStars(); this.applyShip(); this.bindControls();
     window.addEventListener('resize', () => this.resize());
-    // Global safety: any pointerup ANYWHERE releases held inputs (prevents stuck FIRE/BOOST when finger lifts over overlay or HUD)
     window.addEventListener('pointerup', () => { this.input.fire = false; this.input.boost = false; }, true);
     window.addEventListener('pointercancel', () => { this.input.fire = false; this.input.boost = false; }, true);
-    // Releasing dpad keys too
     window.addEventListener('blur', () => { this.input.fire = false; this.input.boost = false; this.touch.up=this.touch.down=this.touch.left=this.touch.right=false; this.keys = {}; });
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
         this.input.fire = false; this.input.boost = false; this.keys = {};
-        // Auto-pause when the tab/app goes to the background so you don't die while away
         if (this.running && !this.dead && !anyOverlayOpen()) openPauseMenu();
       } else { this.last = performance.now(); }
     });
@@ -617,7 +627,6 @@ class ShaderPilotGame {
   start() { this.running = true; this.paused = false; this.last = performance.now(); for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160); this.loop(); }
   stop() { this.running = false; cancelAnimationFrame(this.raf); }
   respawn() {
-    // Hard reset all world state so nothing carries over from previous run
     this.dead = false;
     this.paused = false;
     this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0;
@@ -625,7 +634,6 @@ class ShaderPilotGame {
     this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0;
     this.player.vx = 0; this.player.vy = 0;
     this.player.x = this.w * .22; this.player.y = this.h * .5;
-    // Clear any stuck inputs from the death sequence
     this.input.fire = false; this.input.boost = false;
     this.touch.up = this.touch.down = this.touch.left = this.touch.right = false;
     this.keys = {};
@@ -640,10 +648,7 @@ class ShaderPilotGame {
       const now = performance.now();
       let dt = Math.min(.05, (now - this.last) / 1000);
       this.last = now;
-      // If paused (menu open) just keep painting the last frame; no updates, no enemy spawns, no firing
-      if (!this.paused) {
-        this.update(dt);
-      }
+      if (!this.paused) this.update(dt);
       this.draw();
     } catch (err) {
       console.error('Game loop error:', err.message, err.stack);
@@ -829,7 +834,6 @@ class ShaderPilotGame {
   die() {
     this.dead = true;
     this.burst(this.player.x,this.player.y,'#ff3380',42);
-    // Immediately drop all held inputs so they don't carry to the next run
     this.input.fire = false; this.input.boost = false;
     this.touch.up = this.touch.down = this.touch.left = this.touch.right = false;
     this.keys = {};
@@ -854,11 +858,16 @@ class ShaderPilotGame {
     els.goCredits.textContent = '+' + this.runCredits;
     els.goBest.textContent = Math.floor(currentPilot.best_distance||0);
     els.goBestScore.textContent = Math.floor(currentPilot.best_score||0);
-    // Pause the game while the game-over overlay is up so it doesn't keep simulating
     pauseGameForOverlay();
     els.gameOver.classList.add('active');
   }
-  async saveBest() { const patch = {}; if (this.distance > (currentPilot.best_distance||0)) { currentPilot.best_distance = this.distance; patch.best_distance = this.distance; } if (this.runPoints > (currentPilot.best_score||0)) { currentPilot.best_score = this.runPoints; patch.best_score = this.runPoints; } if (!Object.keys(patch).length) return; try { await supabase.from(PILOTS_TABLE).update(patch).eq('id', currentPilot.id); } catch(e) { console.error('Best save error:', e.message); } }
+  async saveBest() {
+    const patch = {};
+    if (this.distance > (currentPilot.best_distance||0)) { currentPilot.best_distance = this.distance; patch.best_distance = this.distance; }
+    if (this.runPoints > (currentPilot.best_score||0)) { currentPilot.best_score = this.runPoints; patch.best_score = this.runPoints; }
+    if (!Object.keys(patch).length) return;
+    try { await supabase.from(PILOTS_TABLE).update(patch).eq('id', currentPilot.id); } catch(e) { console.error('Best save error:', e.message); }
+  }
   draw() {
     const ctx=this.ctx; ctx.clearRect(0,0,this.w,this.h);
     const g=ctx.createLinearGradient(0,0,this.w,this.h); g.addColorStop(0,'#090521'); g.addColorStop(.48,'#110835'); g.addColorStop(1,'#04010b'); ctx.fillStyle=g; ctx.fillRect(0,0,this.w,this.h);
