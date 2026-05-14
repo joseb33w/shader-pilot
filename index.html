@@ -250,9 +250,37 @@ function withTimeout(promise, ms, label) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+// ---- Menu/overlay tracking: pause game loop and clear stuck inputs ----
+function anyOverlayOpen() {
+  return els.weaponsMenu.classList.contains('active') ||
+         els.hangarMenu.classList.contains('active') ||
+         els.gameOver.classList.contains('active');
+}
+function clearGameInputs() {
+  if (!game) return;
+  game.input.fire = false;
+  game.input.boost = false;
+  game.touch.up = false; game.touch.down = false; game.touch.left = false; game.touch.right = false;
+  game.keys = {};
+}
+function pauseGameForOverlay() {
+  if (!game) return;
+  clearGameInputs();
+  game.paused = true;
+}
+function resumeGameAfterOverlay() {
+  if (!game) return;
+  if (anyOverlayOpen()) return;
+  clearGameInputs();
+  // Reset timing so we don't get a giant dt jump after being paused
+  game.last = performance.now();
+  game.paused = false;
+}
+
 function defaultWeapons() { return { owned: ['pulse'], active: 'pulse', levels: {} }; }
 function weaponState() {
-  const up = currentPilot?.upgrades || {};
+  if (!currentPilot) return defaultWeapons();
+  const up = currentPilot.upgrades || {};
   if (!up.weapons || !Array.isArray(up.weapons.owned)) up.weapons = defaultWeapons();
   if (!up.weapons.active || !WEAPONS[up.weapons.active]) up.weapons.active = 'pulse';
   if (!up.weapons.owned.includes('pulse')) up.weapons.owned.unshift('pulse');
@@ -262,10 +290,24 @@ function weaponState() {
 function activeWeapon() { return WEAPONS[weaponState().active] || WEAPONS.pulse; }
 
 async function savePilotPartial(patch) {
-  if (!currentPilot?.id) return;
+  if (!currentPilot) return { ok: false, error: 'no pilot' };
+  // Apply locally immediately so UI/game pick it up
   Object.assign(currentPilot, patch);
-  try { await supabase.from(PILOTS_TABLE).update(patch).eq('id', currentPilot.id); }
-  catch (err) { console.error('Pilot save error:', err.message); }
+  if (!currentPilot.id) return { ok: true, local: true };
+  try {
+    const { data, error } = await withTimeout(
+      supabase.from(PILOTS_TABLE).update(patch).eq('id', currentPilot.id).select().single(),
+      8000, 'Pilot save'
+    );
+    if (error) throw error;
+    // Merge server's authoritative values back in (in case of defaults/triggers)
+    if (data) Object.assign(currentPilot, data);
+    return { ok: true };
+  } catch (err) {
+    console.error('Pilot save error:', err.message || err);
+    showToast('SAVE FAILED — RETRYING');
+    return { ok: false, error: err.message || String(err) };
+  }
 }
 
 async function loadPilot() {
@@ -341,14 +383,24 @@ els.authForm.addEventListener('submit', async (event) => {
 });
 
 els.signout.addEventListener('click', async () => { if (game) game.stop(); game = null; await supabase.auth.signOut(); });
-els.weaponsBtn.addEventListener('click', openWeapons);
-els.weaponsClose.addEventListener('click', () => els.weaponsMenu.classList.remove('active'));
-els.hangarBtn.addEventListener('click', openHangar);
-els.hangarClose.addEventListener('click', () => els.hangarMenu.classList.remove('active'));
-els.restart.addEventListener('click', () => { els.gameOver.classList.remove('active'); if (game) game.respawn(); });
+
+// Menu open/close handlers — pause the game and clear stuck inputs every time
+els.weaponsBtn.addEventListener('click', () => { openWeapons(); });
+els.weaponsClose.addEventListener('click', () => { els.weaponsMenu.classList.remove('active'); resumeGameAfterOverlay(); });
+els.hangarBtn.addEventListener('click', () => { openHangar(); });
+els.hangarClose.addEventListener('click', () => { els.hangarMenu.classList.remove('active'); resumeGameAfterOverlay(); });
+els.restart.addEventListener('click', () => { els.gameOver.classList.remove('active'); resumeGameAfterOverlay(); if (game) game.respawn(); });
 els.gameOverWeapons.addEventListener('click', () => { els.gameOver.classList.remove('active'); openWeapons(); });
 
-function openWeapons() { renderWeapons(); els.weaponsMenu.classList.add('active'); }
+// Close overlays with Escape
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (els.weaponsMenu.classList.contains('active')) { els.weaponsMenu.classList.remove('active'); resumeGameAfterOverlay(); }
+    else if (els.hangarMenu.classList.contains('active')) { els.hangarMenu.classList.remove('active'); resumeGameAfterOverlay(); }
+  }
+});
+
+function openWeapons() { pauseGameForOverlay(); renderWeapons(); els.weaponsMenu.classList.add('active'); }
 function renderWeapons() {
   const ws = weaponState();
   let html = '';
@@ -368,19 +420,54 @@ function renderWeapons() {
   els.weaponsContent.querySelectorAll('[data-buy]').forEach(btn => btn.addEventListener('click', async () => {
     const key = btn.dataset.buy; const weapon = WEAPONS[key];
     if (!weapon || currentPilot.credits < weapon.price) return;
-    const next = { ...currentPilot.upgrades, weapons: { ...ws, owned: [...ws.owned, key], active: key } };
-    await savePilotPartial({ credits: currentPilot.credits - weapon.price, upgrades: next });
-    updateHud(); renderWeapons(); showToast(`${weapon.name} purchased`);
+    btn.disabled = true; btn.textContent = 'BUYING...';
+    const currentWS = weaponState();
+    // Build a deep-cloned upgrades object so the JSONB column actually changes
+    const nextUpgrades = JSON.parse(JSON.stringify(currentPilot.upgrades || {}));
+    nextUpgrades.weapons = {
+      owned: Array.from(new Set([...(currentWS.owned || []), key])),
+      active: key,
+      levels: currentWS.levels || {}
+    };
+    const result = await savePilotPartial({
+      credits: currentPilot.credits - weapon.price,
+      upgrades: nextUpgrades
+    });
+    if (!result.ok) {
+      // Roll back local state on failure
+      currentPilot.credits += weapon.price;
+      const ws2 = weaponState();
+      ws2.owned = ws2.owned.filter(o => o !== key);
+      ws2.active = ws2.owned[0] || 'pulse';
+      showToast('PURCHASE FAILED');
+    } else {
+      showToast(`${weapon.name} PURCHASED`);
+    }
+    updateHud(); renderWeapons();
   }));
   els.weaponsContent.querySelectorAll('[data-select]').forEach(btn => btn.addEventListener('click', async () => {
     const key = btn.dataset.select;
-    const next = { ...currentPilot.upgrades, weapons: { ...ws, active: key } };
-    await savePilotPartial({ upgrades: next });
-    updateHud(); renderWeapons(); showToast(`${WEAPONS[key].name} equipped`);
+    const currentWS = weaponState();
+    const prevActive = currentWS.active;
+    const nextUpgrades = JSON.parse(JSON.stringify(currentPilot.upgrades || {}));
+    nextUpgrades.weapons = {
+      owned: currentWS.owned,
+      active: key,
+      levels: currentWS.levels || {}
+    };
+    const result = await savePilotPartial({ upgrades: nextUpgrades });
+    if (!result.ok) {
+      const ws2 = weaponState();
+      ws2.active = prevActive;
+      showToast('EQUIP FAILED');
+    } else {
+      showToast(`${WEAPONS[key].name} EQUIPPED`);
+    }
+    updateHud(); renderWeapons();
   }));
 }
 
-function openHangar() { renderHangar(); els.hangarMenu.classList.add('active'); }
+function openHangar() { pauseGameForOverlay(); renderHangar(); els.hangarMenu.classList.add('active'); }
 function renderHangar() {
   const owned = currentPilot.owned_ships || ['striker'];
   let html = `<div class="weapon-desc" style="text-align:center;color:#ffeb80">CREDITS: ${currentPilot.credits}</div>`;
@@ -392,12 +479,19 @@ function renderHangar() {
     </div>`;
   });
   els.hangarContent.innerHTML = html;
-  els.hangarContent.querySelectorAll('[data-equip]').forEach(btn => btn.addEventListener('click', async () => { await savePilotPartial({ active_ship: btn.dataset.equip }); updateHud(); if (game) game.applyShip(); renderHangar(); }));
+  els.hangarContent.querySelectorAll('[data-equip]').forEach(btn => btn.addEventListener('click', async () => {
+    const result = await savePilotPartial({ active_ship: btn.dataset.equip });
+    if (!result.ok) { showToast('EQUIP FAILED'); }
+    updateHud(); if (game) game.applyShip(); renderHangar();
+  }));
   els.hangarContent.querySelectorAll('[data-shipbuy]').forEach(btn => btn.addEventListener('click', async () => {
     const key = btn.dataset.shipbuy; const ship = SHIPS[key];
     if (currentPilot.credits < ship.price) return;
-    await savePilotPartial({ credits: currentPilot.credits - ship.price, owned_ships: [...owned, key], active_ship: key });
-    updateHud(); if (game) game.applyShip(); renderHangar(); showToast(`${ship.name} acquired`);
+    btn.disabled = true; btn.textContent = 'BUYING...';
+    const result = await savePilotPartial({ credits: currentPilot.credits - ship.price, owned_ships: Array.from(new Set([...owned, key])), active_ship: key });
+    if (!result.ok) { currentPilot.credits += ship.price; showToast('PURCHASE FAILED'); }
+    else { showToast(`${ship.name} ACQUIRED`); }
+    updateHud(); if (game) game.applyShip(); renderHangar();
   }));
 }
 
@@ -408,9 +502,15 @@ class ShaderPilotGame {
     this.input = { fire:false, boost:false };
     this.player = { x: 0, y: 0, vx: 0, vy: 0, hp: 100, maxHp: 100 };
     this.stars = []; this.lasers = []; this.enemyLasers = []; this.enemies = []; this.particles = []; this.gravityWells = []; this.arcs = [];
-    this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.dead = false; this.running = false;
+    this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.dead = false; this.running = false; this.paused = false;
     this.resize(); this.createStars(); this.applyShip(); this.bindControls();
     window.addEventListener('resize', () => this.resize());
+    // Global safety: any pointerup ANYWHERE releases held inputs (prevents stuck FIRE/BOOST when finger lifts over overlay or HUD)
+    window.addEventListener('pointerup', () => { this.input.fire = false; this.input.boost = false; }, true);
+    window.addEventListener('pointercancel', () => { this.input.fire = false; this.input.boost = false; }, true);
+    // Releasing dpad keys too
+    window.addEventListener('blur', () => { this.input.fire = false; this.input.boost = false; this.touch.up=this.touch.down=this.touch.left=this.touch.right=false; this.keys = {}; });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) { this.input.fire = false; this.input.boost = false; this.keys = {}; } else { this.last = performance.now(); } });
   }
   resize() { this.w = this.canvas.width = Math.floor(window.innerWidth * devicePixelRatio); this.h = this.canvas.height = Math.floor(window.innerHeight * devicePixelRatio); this.ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0); this.w = window.innerWidth; this.h = window.innerHeight; this.player.x = this.w * .22; this.player.y = this.player.y || this.h * .5; }
   createStars() { this.stars = Array.from({length: 180}, () => ({ x: Math.random()*this.w, y: Math.random()*this.h, z: .25 + Math.random()*1.8, color: Math.random()>.7 ? '#ff9bd1' : (Math.random()>.45 ? '#9fd7ff' : '#fff') })); }
@@ -442,10 +542,42 @@ class ShaderPilotGame {
     setHold(els.boost, () => this.input.boost = true, () => this.input.boost = false);
     document.querySelectorAll('[data-key]').forEach(btn => setHold(btn, () => this.touch[btn.dataset.key] = true, () => this.touch[btn.dataset.key] = false));
   }
-  start() { this.running = true; this.last = performance.now(); for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160); this.loop(); }
+  start() { this.running = true; this.paused = false; this.last = performance.now(); for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160); this.loop(); }
   stop() { this.running = false; cancelAnimationFrame(this.raf); }
-  respawn() { this.dead = false; this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lasers=[]; this.enemyLasers=[]; this.enemies=[]; this.particles=[]; this.gravityWells=[]; this.arcs=[]; this.player.x=this.w*.22; this.player.y=this.h*.5; this.applyShip(); for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160); updateHud(); }
-  loop = () => { if (!this.running) return; try { const now=performance.now(); const dt=Math.min(.05,(now-this.last)/1000); this.last=now; this.update(dt); this.draw(); } catch(err) { console.error('Game loop error:', err.message, err.stack); } this.raf=requestAnimationFrame(this.loop); }
+  respawn() {
+    // Hard reset all world state so nothing carries over from previous run
+    this.dead = false;
+    this.paused = false;
+    this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0;
+    this.lasers = []; this.enemyLasers = []; this.enemies = []; this.particles = []; this.gravityWells = []; this.arcs = [];
+    this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0;
+    this.player.vx = 0; this.player.vy = 0;
+    this.player.x = this.w * .22; this.player.y = this.h * .5;
+    // Clear any stuck inputs from the death sequence
+    this.input.fire = false; this.input.boost = false;
+    this.touch.up = this.touch.down = this.touch.left = this.touch.right = false;
+    this.keys = {};
+    this.applyShip();
+    for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160);
+    this.last = performance.now();
+    updateHud();
+  }
+  loop = () => {
+    if (!this.running) return;
+    try {
+      const now = performance.now();
+      let dt = Math.min(.05, (now - this.last) / 1000);
+      this.last = now;
+      // If paused (menu open) just keep painting the last frame; no updates, no enemy spawns, no firing
+      if (!this.paused) {
+        this.update(dt);
+      }
+      this.draw();
+    } catch (err) {
+      console.error('Game loop error:', err.message, err.stack);
+    }
+    this.raf = requestAnimationFrame(this.loop);
+  }
   update(dt) {
     if (this.dead) { this.updateParticles(dt); this.updateArcs(dt); return; }
     const boost = this.input.boost || this.keys[' '] || this.keys.shift;
@@ -504,7 +636,6 @@ class ShaderPilotGame {
   updateGravity(dt) {
     for (let i=this.gravityWells.length-1;i>=0;i--) {
       const g=this.gravityWells[i]; g.life -= dt; g.phase += dt*4; g.tickTimer += dt;
-      // Pull enemies in
       for (let j=this.enemies.length-1;j>=0;j--) {
         const e=this.enemies[j]; const dx=g.x-e.x, dy=g.y-e.y, d=Math.hypot(dx,dy);
         if (d < g.radius && d > 4) {
@@ -512,7 +643,6 @@ class ShaderPilotGame {
           e.x += (dx/d) * force; e.y += (dy/d) * force;
         }
       }
-      // Damage tick every 0.15s
       if (g.tickTimer >= .15) {
         g.tickTimer = 0;
         for (let j=this.enemies.length-1;j>=0;j--) {
@@ -522,13 +652,11 @@ class ShaderPilotGame {
           }
         }
       }
-      // Suck in particles for swirl effect
       if (Math.random() < .6) {
         const a = Math.random()*Math.PI*2; const r = g.radius;
         this.particles.push({x:g.x+Math.cos(a)*r, y:g.y+Math.sin(a)*r, vx:-Math.cos(a)*120, vy:-Math.sin(a)*120, life:.5, color:g.color, size:2});
       }
       if (g.life <= 0) {
-        // Final implosion damage
         for (let j=this.enemies.length-1;j>=0;j--) {
           const e=this.enemies[j]; if (Math.hypot(e.x-g.x, e.y-g.y) < g.radius) {
             e.hp -= g.damage*3; if (e.hp <= 0) this.killEnemy(j);
@@ -545,7 +673,6 @@ class ShaderPilotGame {
     for (let c=0;c<maxChains;c++) {
       const target = this.nearestEnemy(cx,cy,hit);
       if (!target || target.dist > range) break;
-      // Arc visual
       this.arcs.push({ x1:cx, y1:cy, x2:target.enemy.x, y2:target.enemy.y, life:.18, color, glow });
       target.enemy.hp -= damage * (1 - c*0.18);
       this.burst(target.enemy.x, target.enemy.y, glow, 8);
@@ -557,7 +684,6 @@ class ShaderPilotGame {
   updateLasers(dt) {
     for (let i=this.lasers.length-1;i>=0;i--) {
       const l=this.lasers[i]; l.phase += dt*18; l.trail.push({x:l.x,y:l.y}); if (l.trail.length>8) l.trail.shift();
-      // Homing
       if (l.homing) {
         const target = this.nearestEnemy(l.x,l.y);
         if (target && target.dist < 500) {
@@ -573,17 +699,14 @@ class ShaderPilotGame {
           l.vy = Math.sin(newAngle) * speed;
         }
       }
-      // Expanding wave
       if (l.expand) {
         const traveled = l.x - l.spawnX;
         l.width = l.startWidth + traveled * 0.18;
       }
       l.x += l.vx*dt; l.y += l.vy*dt + (l.zigzag ? Math.sin(l.phase)*2.6 : 0);
-      // Wave cannon vertical oscillation
       if (l.expand) l.y += Math.sin(l.phase*.6) * 1.5;
       l.life -= dt;
       let remove = l.life <= 0 || l.x > this.w + 80 || l.y < -80 || l.y > this.h+80;
-      // Scatter bouncing on miss
       if (l.scatter && (l.y < 60 || l.y > this.h-60)) {
         if (l.scatterBounces > 0) { l.vy = -l.vy; l.scatterBounces -= 1; this.burst(l.x,l.y,l.glow,4); }
         else remove = true;
@@ -592,11 +715,9 @@ class ShaderPilotGame {
         const e=this.enemies[j]; if (Math.hypot(e.x-l.x, e.y-l.y) < e.r + l.width) {
           e.hp -= l.damage; this.burst(l.x,l.y,l.glow, l.splash ? 16 : 6);
           if (l.splash) this.splashDamage(l.x,l.y,l.splash,l.damage*.7);
-          // Tesla chain
           if (l.chain) {
             this.chainTesla(e.x, e.y, l.damage*.85, l.color, l.glow, l.chain, l.chainRange);
           }
-          // Singularity spawns gravity well on impact
           if (l.gravity) {
             this.spawnGravityWell(l.x, l.y, l.gravityLife, l.gravityRadius, l.gravityPull, l.damage, l.color, l.glow);
             remove = true;
@@ -607,7 +728,6 @@ class ShaderPilotGame {
           if (l.pierce > 0) l.pierce -= 1; else remove = true;
         }
       }
-      // Singularity also drops well at end of life if it never hit
       if (l.gravity && l.life <= 0 && !remove) {
         this.spawnGravityWell(l.x, l.y, l.gravityLife, l.gravityRadius, l.gravityPull, l.damage, l.color, l.glow);
         remove = true;
@@ -634,8 +754,38 @@ class ShaderPilotGame {
   updateParticles(dt) { for (let i=this.particles.length-1;i>=0;i--) { const p=this.particles[i]; p.x+=p.vx*dt; p.y+=p.vy*dt; p.life-=dt; if (p.life<=0) this.particles.splice(i,1); } }
   takeDamage(amount) { if (this.dead) return; this.player.hp -= amount; this.updateHp(); if (this.player.hp <= 0) this.die(); }
   updateHp() { els.hpFill.style.width = Math.max(0, this.player.hp / this.player.maxHp * 100) + '%'; }
-  die() { this.dead = true; this.burst(this.player.x,this.player.y,'#ff3380',42); setTimeout(() => this.endRun(), 650); }
-  async endRun() { this.updatePoints(); const newBest = this.runPoints > (currentPilot.best_score||0); const patch = { credits: (currentPilot.credits||0) + this.runCredits, kills: (currentPilot.kills||0) + this.runKills, runs_completed: (currentPilot.runs_completed||0)+1 }; if (this.distance > (currentPilot.best_distance||0)) patch.best_distance = this.distance; if (newBest) patch.best_score = this.runPoints; await savePilotPartial(patch); updateHud(); if (newBest) showToast('NEW HIGH POINTS'); els.goPoints.textContent=this.runPoints; els.goDist.textContent=Math.floor(this.distance); els.goKills.textContent=this.runKills; els.goCredits.textContent='+'+this.runCredits; els.goBest.textContent=Math.floor(currentPilot.best_distance||0); els.goBestScore.textContent=Math.floor(currentPilot.best_score||0); els.gameOver.classList.add('active'); }
+  die() {
+    this.dead = true;
+    this.burst(this.player.x,this.player.y,'#ff3380',42);
+    // Immediately drop all held inputs so they don't carry to the next run
+    this.input.fire = false; this.input.boost = false;
+    this.touch.up = this.touch.down = this.touch.left = this.touch.right = false;
+    this.keys = {};
+    setTimeout(() => this.endRun(), 650);
+  }
+  async endRun() {
+    this.updatePoints();
+    const newBest = this.runPoints > (currentPilot.best_score||0);
+    const patch = {
+      credits: (currentPilot.credits||0) + this.runCredits,
+      kills: (currentPilot.kills||0) + this.runKills,
+      runs_completed: (currentPilot.runs_completed||0) + 1
+    };
+    if (this.distance > (currentPilot.best_distance||0)) patch.best_distance = this.distance;
+    if (newBest) patch.best_score = this.runPoints;
+    await savePilotPartial(patch);
+    updateHud();
+    if (newBest) showToast('NEW HIGH POINTS');
+    els.goPoints.textContent = this.runPoints;
+    els.goDist.textContent = Math.floor(this.distance);
+    els.goKills.textContent = this.runKills;
+    els.goCredits.textContent = '+' + this.runCredits;
+    els.goBest.textContent = Math.floor(currentPilot.best_distance||0);
+    els.goBestScore.textContent = Math.floor(currentPilot.best_score||0);
+    // Pause the game while the game-over overlay is up so it doesn't keep simulating
+    pauseGameForOverlay();
+    els.gameOver.classList.add('active');
+  }
   async saveBest() { const patch = {}; if (this.distance > (currentPilot.best_distance||0)) { currentPilot.best_distance = this.distance; patch.best_distance = this.distance; } if (this.runPoints > (currentPilot.best_score||0)) { currentPilot.best_score = this.runPoints; patch.best_score = this.runPoints; } if (!Object.keys(patch).length) return; try { await supabase.from(PILOTS_TABLE).update(patch).eq('id', currentPilot.id); } catch(e) { console.error('Best save error:', e.message); } }
   draw() {
     const ctx=this.ctx; ctx.clearRect(0,0,this.w,this.h);
@@ -651,9 +801,7 @@ class ShaderPilotGame {
     const ctx=this.ctx;
     this.gravityWells.forEach(g => {
       ctx.save();
-      const t = g.life / g.maxLife;
       const r = g.radius;
-      // Outer aura
       const grad = ctx.createRadialGradient(g.x,g.y,0,g.x,g.y,r);
       grad.addColorStop(0,'rgba(0,0,0,.95)');
       grad.addColorStop(.55, g.color);
@@ -661,12 +809,10 @@ class ShaderPilotGame {
       ctx.globalAlpha = .85;
       ctx.fillStyle = grad;
       ctx.beginPath(); ctx.arc(g.x,g.y,r,0,Math.PI*2); ctx.fill();
-      // Inner core
       ctx.globalAlpha = 1;
       ctx.shadowBlur = 30; ctx.shadowColor = g.glow;
       ctx.fillStyle = '#000';
       ctx.beginPath(); ctx.arc(g.x,g.y,18+Math.sin(g.phase)*3,0,Math.PI*2); ctx.fill();
-      // Swirl rings
       ctx.strokeStyle = g.glow; ctx.lineWidth = 1.5;
       for (let k=0;k<3;k++) {
         ctx.globalAlpha = .35;
@@ -683,7 +829,6 @@ class ShaderPilotGame {
       ctx.save();
       ctx.shadowBlur = 18; ctx.shadowColor = a.glow;
       ctx.strokeStyle = a.color; ctx.lineWidth = 3; ctx.lineCap='round';
-      // Jagged lightning
       ctx.beginPath();
       const steps = 8;
       ctx.moveTo(a.x1, a.y1);
@@ -702,10 +847,8 @@ class ShaderPilotGame {
     const ctx=this.ctx; ctx.lineCap='round';
     this.lasers.forEach(l=>{
       ctx.save(); ctx.shadowBlur=20; ctx.shadowColor=l.glow;
-      // Trail
       l.trail.forEach((t,i)=>{ if(i===0)return; const a=i/l.trail.length; ctx.strokeStyle=l.color; ctx.globalAlpha=a*.45; ctx.lineWidth=l.width*a; ctx.beginPath(); ctx.moveTo(l.trail[i-1].x,l.trail[i-1].y); ctx.lineTo(t.x,t.y); ctx.stroke(); });
       ctx.globalAlpha=1; ctx.strokeStyle=l.color; ctx.lineWidth=l.width;
-      // Homing missile = pointy projectile aligned to velocity
       if (l.homing) {
         const ang = Math.atan2(l.vy, l.vx);
         ctx.translate(l.x, l.y); ctx.rotate(ang);
@@ -715,7 +858,6 @@ class ShaderPilotGame {
         ctx.fill();
         ctx.strokeStyle = l.glow; ctx.lineWidth = 1.5; ctx.stroke();
       } else if (l.expand) {
-        // Wave cannon: vertical bar that grows
         ctx.beginPath();
         ctx.moveTo(l.x-2, l.y - l.width); ctx.lineTo(l.x-2, l.y + l.width);
         ctx.lineWidth = 6; ctx.stroke();
@@ -723,7 +865,6 @@ class ShaderPilotGame {
         ctx.beginPath(); ctx.moveTo(l.x-l.width*.6, l.y - l.width*1.1); ctx.lineTo(l.x-l.width*.6, l.y + l.width*1.1); ctx.stroke();
         ctx.globalAlpha = 1;
       } else {
-        // Standard beam segment
         ctx.beginPath(); ctx.moveTo(l.x-l.width*3,l.y); ctx.lineTo(l.x+l.width*3,l.y); ctx.stroke();
         if(l.splash || l.gravity){ctx.fillStyle=l.color;ctx.beginPath();ctx.arc(l.x,l.y,l.width*.9,0,Math.PI*2);ctx.fill();}
       }
