@@ -53,6 +53,8 @@
   .weapon-readout strong { color: #ffeb80; }
   .top-buttons { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; pointer-events: auto; }
   .top-btn { padding: 8px 12px; background: rgba(5,1,15,.62); border: 1px solid rgba(128,192,255,.45); color: #80c0ff; backdrop-filter: blur(6px); font-size: .95rem; }
+  .top-btn.pause-btn { border-color: rgba(255,235,128,.6); color: #ffeb80; }
+  .top-btn.pause-btn.active { background: rgba(255,235,128,.18); }
   .top-btn:active, .menu-btn:active, .weapon-btn:active, .control-btn:active { transform: translateY(1px); }
   .controls { position: absolute; bottom: 22px; right: 18px; display: grid; gap: 10px; pointer-events: auto; }
   .control-btn { width: 78px; height: 78px; border-radius: 50%; font-family: 'Press Start 2P', monospace; font-size: .52rem; }
@@ -65,8 +67,13 @@
   .overlay { inset: 0; z-index: 80; display: none; align-items: center; justify-content: center; padding: 18px; background: rgba(5,1,15,.9); backdrop-filter: blur(7px); }
   .overlay.active { display: flex; }
   .menu-card { width: min(540px,100%); max-height: 92vh; overflow: auto; padding: 20px 16px; background: rgba(10,4,30,.96); border: 2px solid #6020c0; box-shadow: 0 0 0 1px rgba(96,32,192,.5), 0 0 36px rgba(96,32,192,.45); }
+  .pause-card { width: min(420px,100%); padding: 24px 20px; background: rgba(10,4,30,.96); border: 2px solid #ffeb80; box-shadow: 0 0 0 1px rgba(255,235,128,.4), 0 0 36px rgba(255,235,128,.35); }
   .menu-title { text-align: center; color: #ffeb80; font-family: 'Press Start 2P', monospace; font-size: .95rem; letter-spacing: 2px; text-shadow: 2px 2px 0 #ff3380; }
   .menu-sub { text-align: center; color: #80c0ff; text-transform: uppercase; letter-spacing: 2px; margin: 8px 0 14px; }
+  .pause-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0 16px; color: #80c0ff; }
+  .pause-stats .stat { background: rgba(96,32,192,.2); padding: 7px; text-align: center; font-size: .9rem; letter-spacing: 1px; }
+  .pause-stats .stat strong { color: #f6edff; display: block; font-size: 1.15rem; margin-top: 2px; }
+  .pause-actions { display: grid; gap: 8px; }
   .weapon-grid { display: grid; gap: 10px; }
   .weapon-card { background: rgba(0,0,0,.55); border: 1px solid rgba(255,51,128,.35); padding: 12px; }
   .weapon-card.active { border-color: #ffeb80; box-shadow: 0 0 16px rgba(255,235,128,.35); }
@@ -81,6 +88,7 @@
   .menu-btn { padding: 10px 12px; background: linear-gradient(180deg,#ff3380,#b01062); box-shadow: 0 3px 0 #6010a0; }
   .menu-btn.secondary { background: rgba(96,32,192,.65); border: 1px solid #80c0ff; color: #80c0ff; box-shadow: none; }
   .menu-btn.success { background: linear-gradient(180deg,#43d189,#208052); box-shadow: 0 3px 0 #105030; }
+  .menu-btn.warning { background: linear-gradient(180deg,#ffb000,#a06000); box-shadow: 0 3px 0 #604000; color: #fff; }
   .menu-btn:disabled { opacity: .4; cursor: not-allowed; }
   .weapon-btn { width: 100%; padding: 10px; margin-top: 6px; background: rgba(96,32,192,.65); border: 1px solid #80c0ff; color: #80c0ff; }
   .weapon-btn.buy { background: linear-gradient(180deg,#43d189,#208052); color: white; border: 0; }
@@ -138,6 +146,7 @@
       <div class="hud-row"><span class="hud-label">CR</span><span id="hudCredits">0</span></div>
     </div>
     <div class="top-buttons">
+      <button class="top-btn pause-btn" id="pauseBtn" type="button" title="Pause (P)">❚❚ Pause</button>
       <button class="top-btn" id="weaponsBtn" type="button">Weapons</button>
       <button class="top-btn" id="hangarBtn" type="button">Hangar</button>
       <button class="top-btn" id="signoutBtn" type="button">Exit</button>
@@ -155,6 +164,24 @@
     </div>
   </div>
 </section>
+
+<div class="overlay" id="pauseMenu">
+  <div class="pause-card">
+    <div class="menu-title">PAUSED</div>
+    <div class="menu-sub">// take a breather //</div>
+    <div class="pause-stats">
+      <div class="stat">PTS<strong id="pausePoints">0</strong></div>
+      <div class="stat">DIST<strong id="pauseDist">0</strong></div>
+      <div class="stat">KILLS<strong id="pauseKills">0</strong></div>
+    </div>
+    <div class="pause-actions">
+      <button class="menu-btn success" id="resumeBtn" type="button">▶ Resume</button>
+      <button class="menu-btn secondary" id="pauseWeapons" type="button">Open Weapons</button>
+      <button class="menu-btn secondary" id="pauseHangar" type="button">Open Hangar</button>
+      <button class="menu-btn warning" id="pauseRestart" type="button">↻ Restart Run</button>
+    </div>
+  </div>
+</div>
 
 <div class="overlay" id="weaponsMenu">
   <div class="menu-card">
@@ -224,7 +251,8 @@ const els = {
   authForm: document.getElementById('authForm'), authTabs: document.querySelectorAll('[data-tab]'), callsignField: document.getElementById('callsignField'), callsign: document.getElementById('callsignInput'), email: document.getElementById('emailInput'), password: document.getElementById('passwordInput'), authSubmit: document.getElementById('authSubmit'), authMsg: document.getElementById('authMsg'),
   canvas: document.getElementById('gameCanvas'), hudCallsign: document.getElementById('hudCallsign'), hudShip: document.getElementById('hudShip'), hudPoints: document.getElementById('hudPoints'), hudDist: document.getElementById('hudDist'), hudKills: document.getElementById('hudKills'), hudCredits: document.getElementById('hudCredits'), hpFill: document.getElementById('hpFill'), weaponReadout: document.getElementById('weaponReadout'),
   signout: document.getElementById('signoutBtn'), fire: document.getElementById('fireBtn'), boost: document.getElementById('boostBtn'), weaponsBtn: document.getElementById('weaponsBtn'), weaponsMenu: document.getElementById('weaponsMenu'), weaponsContent: document.getElementById('weaponsContent'), weaponsClose: document.getElementById('weaponsClose'),
-  hangarBtn: document.getElementById('hangarBtn'), hangarMenu: document.getElementById('hangarMenu'), hangarContent: document.getElementById('hangarContent'), hangarClose: document.getElementById('hangarClose'), gameOver: document.getElementById('gameOverMenu'), restart: document.getElementById('restartBtn'), gameOverWeapons: document.getElementById('gameOverWeapons'), goPoints: document.getElementById('goPoints'), goDist: document.getElementById('goDist'), goKills: document.getElementById('goKills'), goCredits: document.getElementById('goCredits'), goBest: document.getElementById('goBest'), goBestScore: document.getElementById('goBestScore')
+  hangarBtn: document.getElementById('hangarBtn'), hangarMenu: document.getElementById('hangarMenu'), hangarContent: document.getElementById('hangarContent'), hangarClose: document.getElementById('hangarClose'), gameOver: document.getElementById('gameOverMenu'), restart: document.getElementById('restartBtn'), gameOverWeapons: document.getElementById('gameOverWeapons'), goPoints: document.getElementById('goPoints'), goDist: document.getElementById('goDist'), goKills: document.getElementById('goKills'), goCredits: document.getElementById('goCredits'), goBest: document.getElementById('goBest'), goBestScore: document.getElementById('goBestScore'),
+  pauseBtn: document.getElementById('pauseBtn'), pauseMenu: document.getElementById('pauseMenu'), resumeBtn: document.getElementById('resumeBtn'), pauseWeapons: document.getElementById('pauseWeapons'), pauseHangar: document.getElementById('pauseHangar'), pauseRestart: document.getElementById('pauseRestart'), pausePoints: document.getElementById('pausePoints'), pauseDist: document.getElementById('pauseDist'), pauseKills: document.getElementById('pauseKills')
 };
 
 let authMode = 'signin';
@@ -254,7 +282,8 @@ function withTimeout(promise, ms, label) {
 function anyOverlayOpen() {
   return els.weaponsMenu.classList.contains('active') ||
          els.hangarMenu.classList.contains('active') ||
-         els.gameOver.classList.contains('active');
+         els.gameOver.classList.contains('active') ||
+         els.pauseMenu.classList.contains('active');
 }
 function clearGameInputs() {
   if (!game) return;
@@ -267,6 +296,7 @@ function pauseGameForOverlay() {
   if (!game) return;
   clearGameInputs();
   game.paused = true;
+  els.pauseBtn.classList.add('active');
 }
 function resumeGameAfterOverlay() {
   if (!game) return;
@@ -275,6 +305,20 @@ function resumeGameAfterOverlay() {
   // Reset timing so we don't get a giant dt jump after being paused
   game.last = performance.now();
   game.paused = false;
+  els.pauseBtn.classList.remove('active');
+}
+
+function openPauseMenu() {
+  if (!game || game.dead) return;
+  pauseGameForOverlay();
+  els.pausePoints.textContent = game.runPoints || 0;
+  els.pauseDist.textContent = Math.floor(game.distance || 0);
+  els.pauseKills.textContent = game.runKills || 0;
+  els.pauseMenu.classList.add('active');
+}
+function closePauseMenu() {
+  els.pauseMenu.classList.remove('active');
+  resumeGameAfterOverlay();
 }
 
 function defaultWeapons() { return { owned: ['pulse'], active: 'pulse', levels: {} }; }
@@ -384,6 +428,20 @@ els.authForm.addEventListener('submit', async (event) => {
 
 els.signout.addEventListener('click', async () => { if (game) game.stop(); game = null; await supabase.auth.signOut(); });
 
+// Pause button + pause menu
+els.pauseBtn.addEventListener('click', () => {
+  if (els.pauseMenu.classList.contains('active')) closePauseMenu();
+  else openPauseMenu();
+});
+els.resumeBtn.addEventListener('click', () => closePauseMenu());
+els.pauseWeapons.addEventListener('click', () => { els.pauseMenu.classList.remove('active'); openWeapons(); });
+els.pauseHangar.addEventListener('click', () => { els.pauseMenu.classList.remove('active'); openHangar(); });
+els.pauseRestart.addEventListener('click', () => {
+  els.pauseMenu.classList.remove('active');
+  resumeGameAfterOverlay();
+  if (game) game.respawn();
+});
+
 // Menu open/close handlers — pause the game and clear stuck inputs every time
 els.weaponsBtn.addEventListener('click', () => { openWeapons(); });
 els.weaponsClose.addEventListener('click', () => { els.weaponsMenu.classList.remove('active'); resumeGameAfterOverlay(); });
@@ -392,11 +450,19 @@ els.hangarClose.addEventListener('click', () => { els.hangarMenu.classList.remov
 els.restart.addEventListener('click', () => { els.gameOver.classList.remove('active'); resumeGameAfterOverlay(); if (game) game.respawn(); });
 els.gameOverWeapons.addEventListener('click', () => { els.gameOver.classList.remove('active'); openWeapons(); });
 
-// Close overlays with Escape
+// Keyboard: Escape closes overlays; P toggles pause
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    if (els.weaponsMenu.classList.contains('active')) { els.weaponsMenu.classList.remove('active'); resumeGameAfterOverlay(); }
-    else if (els.hangarMenu.classList.contains('active')) { els.hangarMenu.classList.remove('active'); resumeGameAfterOverlay(); }
+    if (els.pauseMenu.classList.contains('active')) { closePauseMenu(); return; }
+    if (els.weaponsMenu.classList.contains('active')) { els.weaponsMenu.classList.remove('active'); resumeGameAfterOverlay(); return; }
+    if (els.hangarMenu.classList.contains('active')) { els.hangarMenu.classList.remove('active'); resumeGameAfterOverlay(); return; }
+  }
+  if ((e.key === 'p' || e.key === 'P') && els.game.classList.contains('active') && !els.gameOver.classList.contains('active')) {
+    // Don't trigger when typing in inputs (none on game screen, but safe)
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+    if (els.pauseMenu.classList.contains('active')) closePauseMenu();
+    else if (!anyOverlayOpen()) openPauseMenu();
+    e.preventDefault();
   }
 });
 
@@ -510,7 +576,13 @@ class ShaderPilotGame {
     window.addEventListener('pointercancel', () => { this.input.fire = false; this.input.boost = false; }, true);
     // Releasing dpad keys too
     window.addEventListener('blur', () => { this.input.fire = false; this.input.boost = false; this.touch.up=this.touch.down=this.touch.left=this.touch.right=false; this.keys = {}; });
-    document.addEventListener('visibilitychange', () => { if (document.hidden) { this.input.fire = false; this.input.boost = false; this.keys = {}; } else { this.last = performance.now(); } });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        this.input.fire = false; this.input.boost = false; this.keys = {};
+        // Auto-pause when the tab/app goes to the background so you don't die while away
+        if (this.running && !this.dead && !anyOverlayOpen()) openPauseMenu();
+      } else { this.last = performance.now(); }
+    });
   }
   resize() { this.w = this.canvas.width = Math.floor(window.innerWidth * devicePixelRatio); this.h = this.canvas.height = Math.floor(window.innerHeight * devicePixelRatio); this.ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0); this.w = window.innerWidth; this.h = window.innerHeight; this.player.x = this.w * .22; this.player.y = this.player.y || this.h * .5; }
   createStars() { this.stars = Array.from({length: 180}, () => ({ x: Math.random()*this.w, y: Math.random()*this.h, z: .25 + Math.random()*1.8, color: Math.random()>.7 ? '#ff9bd1' : (Math.random()>.45 ? '#9fd7ff' : '#fff') })); }
