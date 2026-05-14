@@ -211,7 +211,12 @@ const WEAPONS = {
   scatter: { name: 'PRISM SCATTER', price: 650, color: '#4ee7ff', glow: '#9bf8ff', cooldown: .34, damage: .75, speed: 760, beams: 5, spread: .14, width: 3, pierce: 0, desc: 'Five angled lasers fan across the screen.' },
   rail: { name: 'RAIL LANCE', price: 1400, color: '#d58bff', glow: '#f0c4ff', cooldown: .55, damage: 2.8, speed: 1180, beams: 1, spread: 0, width: 9, pierce: 2, desc: 'Thick piercing beam that punches through targets.' },
   plasma: { name: 'PLASMA ORB', price: 2400, color: '#ffb000', glow: '#ff5b21', cooldown: .48, damage: 1.7, speed: 560, beams: 1, spread: 0, width: 14, pierce: 0, splash: 62, desc: 'Slow glowing bolt that bursts in a splash radius.' },
-  ion: { name: 'ION RIPPER', price: 3800, color: '#45ffdf', glow: '#bafff4', cooldown: .26, damage: 1.25, speed: 830, beams: 3, spread: .07, width: 5, pierce: 1, zigzag: true, desc: 'Electric beams weave while piercing one enemy.' }
+  ion: { name: 'ION RIPPER', price: 3800, color: '#45ffdf', glow: '#bafff4', cooldown: .26, damage: 1.25, speed: 830, beams: 3, spread: .07, width: 5, pierce: 1, zigzag: true, desc: 'Electric beams weave while piercing one enemy.' },
+  swarm: { name: 'HOMING SWARM', price: 3200, color: '#ff7ad0', glow: '#ffd6f0', cooldown: .42, damage: 1.4, speed: 540, beams: 4, spread: .35, width: 5, pierce: 0, homing: true, turnRate: 4.5, desc: 'Four guided missiles that hunt the nearest target.' },
+  tesla: { name: 'TESLA ARC', price: 5200, color: '#fffa6b', glow: '#fff8a8', cooldown: .32, damage: 1.6, speed: 1020, beams: 1, spread: 0, width: 6, pierce: 0, chain: 3, chainRange: 220, desc: 'Lightning that jumps between up to 3 nearby foes.' },
+  singularity: { name: 'SINGULARITY', price: 7800, color: '#b070ff', glow: '#e0c0ff', cooldown: 1.1, damage: .9, speed: 360, beams: 1, spread: 0, width: 16, pierce: 0, gravity: true, gravityRadius: 200, gravityPull: 380, gravityLife: 1.6, desc: 'Black hole that pulls enemies in and crushes them.' },
+  flak: { name: 'FLAK BURST', price: 1900, color: '#ffae45', glow: '#ffe2a8', cooldown: .58, damage: 1.1, speed: 720, beams: 8, spread: .28, width: 4, pierce: 0, scatter: true, desc: 'Eight close-range pellets that ricochet on impact.' },
+  wave: { name: 'WAVE CANNON', price: 6400, color: '#65ffe2', glow: '#ccfff5', cooldown: .8, damage: 2.2, speed: 640, beams: 1, spread: 0, width: 10, pierce: 99, expand: true, expandRate: 95, desc: 'Sine wave that grows wider as it travels. Hits everything.' }
 };
 
 const els = {
@@ -402,7 +407,7 @@ class ShaderPilotGame {
     this.keys = {}; this.touch = { up:false, down:false, left:false, right:false };
     this.input = { fire:false, boost:false };
     this.player = { x: 0, y: 0, vx: 0, vy: 0, hp: 100, maxHp: 100 };
-    this.stars = []; this.lasers = []; this.enemyLasers = []; this.enemies = []; this.particles = [];
+    this.stars = []; this.lasers = []; this.enemyLasers = []; this.enemies = []; this.particles = []; this.gravityWells = []; this.arcs = [];
     this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.dead = false; this.running = false;
     this.resize(); this.createStars(); this.applyShip(); this.bindControls();
     window.addEventListener('resize', () => this.resize());
@@ -439,10 +444,10 @@ class ShaderPilotGame {
   }
   start() { this.running = true; this.last = performance.now(); for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160); this.loop(); }
   stop() { this.running = false; cancelAnimationFrame(this.raf); }
-  respawn() { this.dead = false; this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lasers=[]; this.enemyLasers=[]; this.enemies=[]; this.particles=[]; this.player.x=this.w*.22; this.player.y=this.h*.5; this.applyShip(); for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160); updateHud(); }
+  respawn() { this.dead = false; this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lasers=[]; this.enemyLasers=[]; this.enemies=[]; this.particles=[]; this.gravityWells=[]; this.arcs=[]; this.player.x=this.w*.22; this.player.y=this.h*.5; this.applyShip(); for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160); updateHud(); }
   loop = () => { if (!this.running) return; try { const now=performance.now(); const dt=Math.min(.05,(now-this.last)/1000); this.last=now; this.update(dt); this.draw(); } catch(err) { console.error('Game loop error:', err.message, err.stack); } this.raf=requestAnimationFrame(this.loop); }
   update(dt) {
-    if (this.dead) { this.updateParticles(dt); return; }
+    if (this.dead) { this.updateParticles(dt); this.updateArcs(dt); return; }
     const boost = this.input.boost || this.keys[' '] || this.keys.shift;
     let ix = 0, iy = 0;
     if (this.keys.a || this.keys.arrowleft || this.touch.left) ix -= 1; if (this.keys.d || this.keys.arrowright || this.touch.right) ix += 1;
@@ -455,7 +460,7 @@ class ShaderPilotGame {
     this.distance += speed * dt * .08; this.updatePoints(); els.hudDist.textContent = Math.floor(this.distance); els.hudKills.textContent = (currentPilot.kills||0) + this.runKills; els.hudPoints.textContent = this.runPoints;
     if (this.input.fire || this.keys.z || this.keys.j || this.keys.k) this.fireWeapon();
     this.spawnTimer -= dt; if (this.spawnTimer <= 0) { this.spawnEnemy(this.w + 80); this.spawnTimer = Math.max(.45, 1.2 - this.distance/1200); }
-    this.updateStars(dt, speed); this.updateLasers(dt); this.updateEnemies(dt); this.updateParticles(dt);
+    this.updateStars(dt, speed); this.updateGravity(dt); this.updateLasers(dt); this.updateEnemies(dt); this.updateParticles(dt); this.updateArcs(dt);
     this.saveTimer += dt; if (this.saveTimer > 3) { this.saveTimer = 0; this.saveBest(); }
   }
   updatePoints() { this.runPoints = Math.floor(this.distance * 4) + this.runKills * 150 + this.runCredits; }
@@ -467,24 +472,145 @@ class ShaderPilotGame {
     for (let i=0;i<count;i++) {
       const offset = start + i; const angle = offset * weapon.spread;
       const side = count === 1 ? 0 : offset * 9;
-      this.lasers.push({ x:this.player.x+30, y:this.player.y+side, vx: Math.cos(angle)*weapon.speed, vy: Math.sin(angle)*weapon.speed, life: 1.25, color: weapon.color, glow: weapon.glow, width: weapon.width, damage: weapon.damage, pierce: weapon.pierce, splash: weapon.splash || 0, zigzag: !!weapon.zigzag, phase: Math.random()*10, trail: [] });
+      const laser = {
+        x:this.player.x+30, y:this.player.y+side,
+        vx: Math.cos(angle)*weapon.speed, vy: Math.sin(angle)*weapon.speed,
+        life: 1.25, color: weapon.color, glow: weapon.glow, width: weapon.width,
+        damage: weapon.damage, pierce: weapon.pierce, splash: weapon.splash || 0,
+        zigzag: !!weapon.zigzag, phase: Math.random()*10, trail: [],
+        homing: !!weapon.homing, turnRate: weapon.turnRate || 0,
+        chain: weapon.chain || 0, chainRange: weapon.chainRange || 0,
+        gravity: !!weapon.gravity, gravityRadius: weapon.gravityRadius || 0, gravityPull: weapon.gravityPull || 0, gravityLife: weapon.gravityLife || 0,
+        scatter: !!weapon.scatter, scatterBounces: weapon.scatter ? 2 : 0,
+        expand: !!weapon.expand, expandRate: weapon.expandRate || 0,
+        startWidth: weapon.width, spawnX: this.player.x+30, spawnY: this.player.y+side
+      };
+      if (laser.scatter) laser.life = .55;
+      if (laser.expand) laser.life = 1.6;
+      this.lasers.push(laser);
     }
     for (let p=0;p<8;p++) this.particles.push({x:this.player.x+24,y:this.player.y,vx:Math.random()*-80,vy:(Math.random()-.5)*90,life:.2,color:weapon.glow,size:2});
   }
   spawnEnemy(x) { this.enemies.push({ x, y: 80 + Math.random()*(this.h-160), r: 16 + Math.random()*10, hp: 2 + Math.floor(this.distance/400), maxHp: 2 + Math.floor(this.distance/400), speed: 90 + Math.random()*80 + this.distance*.03, phase: Math.random()*8, fire: 1 + Math.random()*2, color: Math.random()>.5 ? '#ff405c' : '#ff9f40' }); }
   updateStars(dt, speed) { this.stars.forEach(s => { s.x -= speed * dt * s.z; if (s.x < -10) { s.x=this.w+10; s.y=Math.random()*this.h; s.z=.25+Math.random()*1.8; } }); }
+  nearestEnemy(x,y,exclude) {
+    let best=null, bd=Infinity;
+    for (let i=0;i<this.enemies.length;i++) { const e=this.enemies[i]; if (exclude && exclude.includes(i)) continue; const d=Math.hypot(e.x-x,e.y-y); if (d<bd) { bd=d; best={enemy:e,index:i,dist:d}; } }
+    return best;
+  }
+  spawnGravityWell(x,y,life,radius,pull,damage,color,glow) {
+    this.gravityWells.push({ x, y, life, maxLife: life, radius, pull, damage, color, glow, phase: 0, tickTimer: 0 });
+  }
+  updateGravity(dt) {
+    for (let i=this.gravityWells.length-1;i>=0;i--) {
+      const g=this.gravityWells[i]; g.life -= dt; g.phase += dt*4; g.tickTimer += dt;
+      // Pull enemies in
+      for (let j=this.enemies.length-1;j>=0;j--) {
+        const e=this.enemies[j]; const dx=g.x-e.x, dy=g.y-e.y, d=Math.hypot(dx,dy);
+        if (d < g.radius && d > 4) {
+          const force = g.pull * (1 - d/g.radius) * dt;
+          e.x += (dx/d) * force; e.y += (dy/d) * force;
+        }
+      }
+      // Damage tick every 0.15s
+      if (g.tickTimer >= .15) {
+        g.tickTimer = 0;
+        for (let j=this.enemies.length-1;j>=0;j--) {
+          const e=this.enemies[j]; if (Math.hypot(e.x-g.x, e.y-g.y) < g.radius*.5) {
+            e.hp -= g.damage; this.particles.push({x:e.x,y:e.y,vx:(Math.random()-.5)*40,vy:(Math.random()-.5)*40,life:.3,color:g.glow,size:2});
+            if (e.hp <= 0) this.killEnemy(j);
+          }
+        }
+      }
+      // Suck in particles for swirl effect
+      if (Math.random() < .6) {
+        const a = Math.random()*Math.PI*2; const r = g.radius;
+        this.particles.push({x:g.x+Math.cos(a)*r, y:g.y+Math.sin(a)*r, vx:-Math.cos(a)*120, vy:-Math.sin(a)*120, life:.5, color:g.color, size:2});
+      }
+      if (g.life <= 0) {
+        // Final implosion damage
+        for (let j=this.enemies.length-1;j>=0;j--) {
+          const e=this.enemies[j]; if (Math.hypot(e.x-g.x, e.y-g.y) < g.radius) {
+            e.hp -= g.damage*3; if (e.hp <= 0) this.killEnemy(j);
+          }
+        }
+        this.burst(g.x,g.y,g.glow,40);
+        this.gravityWells.splice(i,1);
+      }
+    }
+  }
+  updateArcs(dt) { for (let i=this.arcs.length-1;i>=0;i--) { this.arcs[i].life -= dt; if (this.arcs[i].life<=0) this.arcs.splice(i,1); } }
+  chainTesla(startX,startY,damage,color,glow,maxChains,range) {
+    const hit = []; let cx=startX, cy=startY;
+    for (let c=0;c<maxChains;c++) {
+      const target = this.nearestEnemy(cx,cy,hit);
+      if (!target || target.dist > range) break;
+      // Arc visual
+      this.arcs.push({ x1:cx, y1:cy, x2:target.enemy.x, y2:target.enemy.y, life:.18, color, glow });
+      target.enemy.hp -= damage * (1 - c*0.18);
+      this.burst(target.enemy.x, target.enemy.y, glow, 8);
+      if (target.enemy.hp <= 0) this.killEnemy(target.index);
+      hit.push(target.index);
+      cx = target.enemy.x; cy = target.enemy.y;
+    }
+  }
   updateLasers(dt) {
     for (let i=this.lasers.length-1;i>=0;i--) {
       const l=this.lasers[i]; l.phase += dt*18; l.trail.push({x:l.x,y:l.y}); if (l.trail.length>8) l.trail.shift();
-      l.x += l.vx*dt; l.y += l.vy*dt + (l.zigzag ? Math.sin(l.phase)*2.6 : 0); l.life -= dt;
+      // Homing
+      if (l.homing) {
+        const target = this.nearestEnemy(l.x,l.y);
+        if (target && target.dist < 500) {
+          const desiredAngle = Math.atan2(target.enemy.y-l.y, target.enemy.x-l.x);
+          const currentAngle = Math.atan2(l.vy, l.vx);
+          let diff = desiredAngle - currentAngle;
+          while (diff > Math.PI) diff -= Math.PI*2;
+          while (diff < -Math.PI) diff += Math.PI*2;
+          const turn = Math.max(-l.turnRate*dt, Math.min(l.turnRate*dt, diff));
+          const newAngle = currentAngle + turn;
+          const speed = Math.hypot(l.vx, l.vy);
+          l.vx = Math.cos(newAngle) * speed;
+          l.vy = Math.sin(newAngle) * speed;
+        }
+      }
+      // Expanding wave
+      if (l.expand) {
+        const traveled = l.x - l.spawnX;
+        l.width = l.startWidth + traveled * 0.18;
+      }
+      l.x += l.vx*dt; l.y += l.vy*dt + (l.zigzag ? Math.sin(l.phase)*2.6 : 0);
+      // Wave cannon vertical oscillation
+      if (l.expand) l.y += Math.sin(l.phase*.6) * 1.5;
+      l.life -= dt;
       let remove = l.life <= 0 || l.x > this.w + 80 || l.y < -80 || l.y > this.h+80;
+      // Scatter bouncing on miss
+      if (l.scatter && (l.y < 60 || l.y > this.h-60)) {
+        if (l.scatterBounces > 0) { l.vy = -l.vy; l.scatterBounces -= 1; this.burst(l.x,l.y,l.glow,4); }
+        else remove = true;
+      }
       for (let j=this.enemies.length-1;j>=0 && !remove;j--) {
         const e=this.enemies[j]; if (Math.hypot(e.x-l.x, e.y-l.y) < e.r + l.width) {
           e.hp -= l.damage; this.burst(l.x,l.y,l.glow, l.splash ? 16 : 6);
           if (l.splash) this.splashDamage(l.x,l.y,l.splash,l.damage*.7);
+          // Tesla chain
+          if (l.chain) {
+            this.chainTesla(e.x, e.y, l.damage*.85, l.color, l.glow, l.chain, l.chainRange);
+          }
+          // Singularity spawns gravity well on impact
+          if (l.gravity) {
+            this.spawnGravityWell(l.x, l.y, l.gravityLife, l.gravityRadius, l.gravityPull, l.damage, l.color, l.glow);
+            remove = true;
+            if (e.hp <= 0) this.killEnemy(j);
+            break;
+          }
           if (e.hp <= 0) this.killEnemy(j);
           if (l.pierce > 0) l.pierce -= 1; else remove = true;
         }
+      }
+      // Singularity also drops well at end of life if it never hit
+      if (l.gravity && l.life <= 0 && !remove) {
+        this.spawnGravityWell(l.x, l.y, l.gravityLife, l.gravityRadius, l.gravityPull, l.damage, l.color, l.glow);
+        remove = true;
       }
       if (remove) this.lasers.splice(i,1);
     }
@@ -516,12 +642,95 @@ class ShaderPilotGame {
     const g=ctx.createLinearGradient(0,0,this.w,this.h); g.addColorStop(0,'#090521'); g.addColorStop(.48,'#110835'); g.addColorStop(1,'#04010b'); ctx.fillStyle=g; ctx.fillRect(0,0,this.w,this.h);
     ctx.save(); this.stars.forEach(s => { ctx.globalAlpha=Math.min(1,s.z*.8); ctx.fillStyle=s.color; ctx.fillRect(s.x,s.y,Math.max(1,s.z*2),Math.max(1,s.z*2)); }); ctx.restore();
     ctx.strokeStyle='rgba(255,51,128,.18)'; ctx.lineWidth=1; const offset=(this.distance*18)%48; for(let x=-offset;x<this.w;x+=48){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x+this.w*.25,this.h);ctx.stroke();}
-    this.drawShip(); this.enemies.forEach(e=>this.drawEnemy(e)); this.drawLasers(); this.drawParticles(); this.drawPointPopups();
+    this.drawGravityWells(); this.drawShip(); this.enemies.forEach(e=>this.drawEnemy(e)); this.drawLasers(); this.drawArcs(); this.drawParticles(); this.drawPointPopups();
     if (this.dead) { ctx.fillStyle='rgba(0,0,0,.25)'; ctx.fillRect(0,0,this.w,this.h); }
   }
   drawShip() { const ctx=this.ctx, p=this.player; ctx.save(); ctx.translate(p.x,p.y); ctx.shadowBlur=20; ctx.shadowColor=this.ship.color; ctx.fillStyle=this.ship.color; ctx.beginPath(); ctx.moveTo(30,0); ctx.lineTo(-20,-18); ctx.lineTo(-9,0); ctx.lineTo(-20,18); ctx.closePath(); ctx.fill(); ctx.strokeStyle=this.ship.accent; ctx.lineWidth=2; ctx.stroke(); ctx.fillStyle=this.ship.accent; ctx.fillRect(-18,-4,18,8); ctx.restore(); }
   drawEnemy(e) { const ctx=this.ctx; ctx.save(); ctx.translate(e.x,e.y); ctx.rotate(e.phase*.8); ctx.shadowBlur=16; ctx.shadowColor=e.color; ctx.strokeStyle=e.color; ctx.fillStyle='rgba(255,64,80,.18)'; ctx.lineWidth=2; ctx.beginPath(); for(let i=0;i<6;i++){ const a=i*Math.PI/3; const r=i%2?e.r*.65:e.r; const x=Math.cos(a)*r, y=Math.sin(a)*r; if(i===0)ctx.moveTo(x,y); else ctx.lineTo(x,y); } ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore(); ctx.fillStyle='#ffeb80'; ctx.fillRect(e.x-e.r, e.y-e.r-9, (e.hp/e.maxHp)*e.r*2, 3); }
-  drawLasers() { const ctx=this.ctx; ctx.lineCap='round'; this.lasers.forEach(l=>{ ctx.save(); ctx.shadowBlur=20; ctx.shadowColor=l.glow; l.trail.forEach((t,i)=>{ if(i===0)return; const a=i/l.trail.length; ctx.strokeStyle=l.color; ctx.globalAlpha=a*.45; ctx.lineWidth=l.width*a; ctx.beginPath(); ctx.moveTo(l.trail[i-1].x,l.trail[i-1].y); ctx.lineTo(t.x,t.y); ctx.stroke(); }); ctx.globalAlpha=1; ctx.strokeStyle=l.color; ctx.lineWidth=l.width; ctx.beginPath(); ctx.moveTo(l.x-l.width*3,l.y); ctx.lineTo(l.x+l.width*3,l.y); ctx.stroke(); if(l.splash){ctx.fillStyle=l.color;ctx.beginPath();ctx.arc(l.x,l.y,l.width*.9,0,Math.PI*2);ctx.fill();} ctx.restore(); }); this.enemyLasers.forEach(l=>{ ctx.save(); ctx.shadowBlur=12; ctx.shadowColor='#ff4040'; ctx.strokeStyle='#ff4040'; ctx.lineWidth=5; ctx.beginPath(); ctx.moveTo(l.x+10,l.y); ctx.lineTo(l.x-10,l.y); ctx.stroke(); ctx.restore(); }); }
+  drawGravityWells() {
+    const ctx=this.ctx;
+    this.gravityWells.forEach(g => {
+      ctx.save();
+      const t = g.life / g.maxLife;
+      const r = g.radius;
+      // Outer aura
+      const grad = ctx.createRadialGradient(g.x,g.y,0,g.x,g.y,r);
+      grad.addColorStop(0,'rgba(0,0,0,.95)');
+      grad.addColorStop(.55, g.color);
+      grad.addColorStop(1,'rgba(0,0,0,0)');
+      ctx.globalAlpha = .85;
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(g.x,g.y,r,0,Math.PI*2); ctx.fill();
+      // Inner core
+      ctx.globalAlpha = 1;
+      ctx.shadowBlur = 30; ctx.shadowColor = g.glow;
+      ctx.fillStyle = '#000';
+      ctx.beginPath(); ctx.arc(g.x,g.y,18+Math.sin(g.phase)*3,0,Math.PI*2); ctx.fill();
+      // Swirl rings
+      ctx.strokeStyle = g.glow; ctx.lineWidth = 1.5;
+      for (let k=0;k<3;k++) {
+        ctx.globalAlpha = .35;
+        ctx.beginPath();
+        ctx.arc(g.x,g.y, 30 + k*22 + Math.sin(g.phase+k)*4, g.phase + k, g.phase + k + Math.PI*1.3);
+        ctx.stroke();
+      }
+      ctx.restore();
+    });
+  }
+  drawArcs() {
+    const ctx=this.ctx;
+    this.arcs.forEach(a => {
+      ctx.save();
+      ctx.shadowBlur = 18; ctx.shadowColor = a.glow;
+      ctx.strokeStyle = a.color; ctx.lineWidth = 3; ctx.lineCap='round';
+      // Jagged lightning
+      ctx.beginPath();
+      const steps = 8;
+      ctx.moveTo(a.x1, a.y1);
+      for (let s=1;s<steps;s++) {
+        const t = s/steps;
+        const x = a.x1 + (a.x2-a.x1)*t + (Math.random()-.5)*16;
+        const y = a.y1 + (a.y2-a.y1)*t + (Math.random()-.5)*16;
+        ctx.lineTo(x,y);
+      }
+      ctx.lineTo(a.x2, a.y2);
+      ctx.stroke();
+      ctx.restore();
+    });
+  }
+  drawLasers() {
+    const ctx=this.ctx; ctx.lineCap='round';
+    this.lasers.forEach(l=>{
+      ctx.save(); ctx.shadowBlur=20; ctx.shadowColor=l.glow;
+      // Trail
+      l.trail.forEach((t,i)=>{ if(i===0)return; const a=i/l.trail.length; ctx.strokeStyle=l.color; ctx.globalAlpha=a*.45; ctx.lineWidth=l.width*a; ctx.beginPath(); ctx.moveTo(l.trail[i-1].x,l.trail[i-1].y); ctx.lineTo(t.x,t.y); ctx.stroke(); });
+      ctx.globalAlpha=1; ctx.strokeStyle=l.color; ctx.lineWidth=l.width;
+      // Homing missile = pointy projectile aligned to velocity
+      if (l.homing) {
+        const ang = Math.atan2(l.vy, l.vx);
+        ctx.translate(l.x, l.y); ctx.rotate(ang);
+        ctx.fillStyle = l.color;
+        ctx.beginPath();
+        ctx.moveTo(10,0); ctx.lineTo(-6,-4); ctx.lineTo(-3,0); ctx.lineTo(-6,4); ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = l.glow; ctx.lineWidth = 1.5; ctx.stroke();
+      } else if (l.expand) {
+        // Wave cannon: vertical bar that grows
+        ctx.beginPath();
+        ctx.moveTo(l.x-2, l.y - l.width); ctx.lineTo(l.x-2, l.y + l.width);
+        ctx.lineWidth = 6; ctx.stroke();
+        ctx.lineWidth = 2; ctx.globalAlpha = .6;
+        ctx.beginPath(); ctx.moveTo(l.x-l.width*.6, l.y - l.width*1.1); ctx.lineTo(l.x-l.width*.6, l.y + l.width*1.1); ctx.stroke();
+        ctx.globalAlpha = 1;
+      } else {
+        // Standard beam segment
+        ctx.beginPath(); ctx.moveTo(l.x-l.width*3,l.y); ctx.lineTo(l.x+l.width*3,l.y); ctx.stroke();
+        if(l.splash || l.gravity){ctx.fillStyle=l.color;ctx.beginPath();ctx.arc(l.x,l.y,l.width*.9,0,Math.PI*2);ctx.fill();}
+      }
+      ctx.restore();
+    });
+    this.enemyLasers.forEach(l=>{ ctx.save(); ctx.shadowBlur=12; ctx.shadowColor='#ff4040'; ctx.strokeStyle='#ff4040'; ctx.lineWidth=5; ctx.beginPath(); ctx.moveTo(l.x+10,l.y); ctx.lineTo(l.x-10,l.y); ctx.stroke(); ctx.restore(); });
+  }
   drawParticles() { const ctx=this.ctx; this.particles.forEach(p=>{ ctx.globalAlpha=Math.max(0,p.life*2); ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fill(); }); ctx.globalAlpha=1; }
   drawPointPopups() { const ctx=this.ctx; ctx.save(); ctx.font='18px VT323, monospace'; ctx.textAlign='center'; ctx.fillStyle='#ffeb80'; this.particles.filter(p=>p.points).forEach(p=>ctx.fillText(p.points, p.x, p.y)); ctx.restore(); }
 }
