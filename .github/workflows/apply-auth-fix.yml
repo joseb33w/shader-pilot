@@ -11,46 +11,104 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Patch Shader Pilot auth flow
+      - name: Patch Shader Pilot overlay resume flow
         run: |
           python3 <<'PY'
           from pathlib import Path
-
           path = Path('index.html')
           txt = path.read_text()
           original = txt
 
-          helper = """function withTimeout(promise, ms, label) {\n  let timer;\n  const timeout = new Promise((_, reject) => {\n    timer = setTimeout(() => reject(new Error(`${label} timed out. Please try again.`)), ms);\n  });\n  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));\n}\n\n"""
-          if 'function withTimeout(promise, ms, label)' not in txt:
-            txt = txt.replace('function defaultWeapons() { return { owned: [\'pulse\'], active: \'pulse\', levels: {} }; }', helper + 'function defaultWeapons() { return { owned: [\'pulse\'], active: \'pulse\', levels: {} }; }')
+          old_resume = """function resumeGameAfterOverlay() {
+  if (!game) return;
+  if (anyOverlayOpen()) return;
+  clearGameInputs();
+  // Reset timing so we don't get a giant dt jump after being paused
+  game.last = performance.now();
+  game.paused = false;
+  els.pauseBtn.classList.remove('active');
+}"""
+          new_resume = """let overlayResumeTimer = null;
+function forceResumeGameFromOverlay() {
+  if (!game || anyOverlayOpen()) return;
+  clearGameInputs();
+  // Reset timing so we don't get a giant dt jump after a menu/section closes.
+  game.last = performance.now();
+  game.paused = false;
+  els.pauseBtn.classList.remove('active');
+  // In some mobile WebViews RAF can stall after closing fixed overlays.
+  // Cancel the pending frame and queue a clean one so the run always resumes.
+  if (game.running && !game.dead) {
+    try { cancelAnimationFrame(game.raf); } catch (_) {}
+    game.raf = requestAnimationFrame(game.loop);
+  }
+}
+function resumeGameAfterOverlay() {
+  if (!game) return;
+  if (overlayResumeTimer) clearTimeout(overlayResumeTimer);
+  const resume = () => {
+    if (anyOverlayOpen()) return;
+    forceResumeGameFromOverlay();
+  };
+  requestAnimationFrame(resume);
+  overlayResumeTimer = setTimeout(resume, 140);
+}"""
+          if old_resume in txt:
+            txt = txt.replace(old_resume, new_resume)
 
-          txt = txt.replace(
-            "    const { data } = await supabase.from(PILOTS_TABLE).select('*').limit(1);",
-            "    const { data, error } = await withTimeout(supabase.from(PILOTS_TABLE).select('*').limit(1), 8000, 'Pilot lookup');\n    if (error) throw error;"
-          )
-          txt = txt.replace(
-            "      const { data: created } = await supabase.from(PILOTS_TABLE).insert({ callsign, email: currentUser.email, best_score: 0, best_distance: 0, runs_completed: 0, credits: 500, kills: 0, active_ship: 'striker', owned_ships: ['striker'], upgrades: { weapons: defaultWeapons() } }).select().single();",
-            "      const { data: created, error: createError } = await withTimeout(supabase.from(PILOTS_TABLE).insert({ callsign, email: currentUser.email, best_score: 0, best_distance: 0, runs_completed: 0, credits: 500, kills: 0, active_ship: 'striker', owned_ships: ['striker'], upgrades: { weapons: defaultWeapons() } }).select().single(), 8000, 'Pilot creation');\n      if (createError) throw createError;"
-          )
-          txt = txt.replace(
-            "      if (data.user) await supabase.from(PILOTS_TABLE).insert({ callsign, email, best_score: 0, best_distance: 0, runs_completed: 0, credits: 500, kills: 0, active_ship: 'striker', owned_ships: ['striker'], upgrades: { weapons: defaultWeapons() } });",
-            "      if (data.user) await withTimeout(supabase.from(PILOTS_TABLE).insert({ callsign, email, best_score: 0, best_distance: 0, runs_completed: 0, credits: 500, kills: 0, active_ship: 'striker', owned_ships: ['striker'], upgrades: { weapons: defaultWeapons() } }), 8000, 'Pilot registration');"
-          )
-          txt = txt.replace(
-            "      if (!data?.session?.user) throw new Error('No active session returned');\n      await completeSignIn(data.session.user, 'LOADING PILOT...');",
-            "      if (!data?.session?.user) throw new Error('No active session returned');\n      els.authMsg.className = 'auth-msg success';\n      els.authMsg.textContent = 'LOADING PILOT...';\n      await completeSignIn(data.session.user, 'LOADING PILOT...');"
-          )
+          old_ctor = """this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.dead = false; this.running = false; this.paused = false;"""
+          new_ctor = """this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.dead = false; this.running = false; this.paused = false; this.frameWatch = null; this.lastFrameSeen = performance.now();"""
+          if old_ctor in txt:
+            txt = txt.replace(old_ctor, new_ctor)
 
-          old_listener = """supabase.auth.onAuthStateChange(async (_event, session) => {\n  els.loading.classList.add('hidden');\n  if (session?.user) {\n    currentUser = session.user;\n    await loadPilot();\n    await showGame();\n  } else {\n    currentUser = null;\n    currentPilot = null;\n    showAuth();\n  }\n});"""
-          new_listener = """supabase.auth.onAuthStateChange((event, session) => {\n  els.loading.classList.add('hidden');\n  if (event === 'SIGNED_OUT' || !session?.user) {\n    if (authTransitioning && session?.user) return;\n    currentUser = null;\n    currentPilot = null;\n    activeSessionUserId = null;\n    showAuth();\n    return;\n  }\n  if (event === 'SIGNED_IN' && activeSessionUserId !== session.user.id) {\n    setTimeout(() => {\n      completeSignIn(session.user, 'LOADING PILOT...').catch((err) => console.error('Auth state sign-in error:', err.message));\n    }, 0);\n  }\n});"""
-          if old_listener in txt:
-            txt = txt.replace(old_listener, new_listener)
+          old_start_stop = """start() { this.running = true; this.paused = false; this.last = performance.now(); for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160); this.loop(); }
+  stop() { this.running = false; cancelAnimationFrame(this.raf); }"""
+          new_start_stop = """start() {
+    this.running = true;
+    this.paused = false;
+    this.last = performance.now();
+    this.lastFrameSeen = performance.now();
+    for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160);
+    this.loop();
+    clearInterval(this.frameWatch);
+    this.frameWatch = setInterval(() => {
+      if (!this.running || document.hidden || !els.game.classList.contains('active') || anyOverlayOpen() || this.dead) return;
+      if (this.paused || performance.now() - this.lastFrameSeen > 900) {
+        forceResumeGameFromOverlay();
+      }
+    }, 500);
+  }
+  stop() {
+    this.running = false;
+    clearInterval(this.frameWatch);
+    cancelAnimationFrame(this.raf);
+  }"""
+          if old_start_stop in txt:
+            txt = txt.replace(old_start_stop, new_start_stop)
 
-          if txt == original:
-            print('Auth flow already contained the direct login fix; no index.html changes required.')
-          else:
+          old_loop = """const now = performance.now();
+      let dt = Math.min(.05, (now - this.last) / 1000);"""
+          new_loop = """const now = performance.now();
+      this.lastFrameSeen = now;
+      let dt = Math.min(.05, (now - this.last) / 1000);"""
+          if old_loop in txt:
+            txt = txt.replace(old_loop, new_loop, 1)
+
+          old_visibility = """} else { this.last = performance.now(); }
+    });"""
+          new_visibility = """} else {
+        this.last = performance.now();
+        if (this.running && !this.dead && !anyOverlayOpen()) forceResumeGameFromOverlay();
+      }
+    });"""
+          if old_visibility in txt:
+            txt = txt.replace(old_visibility, new_visibility, 1)
+
+          if txt != original:
             path.write_text(txt)
-            print('Patched index.html auth flow.')
+            print('Patched index.html overlay resume flow.')
+          else:
+            print('Freeze patch already present; no index.html changes required.')
           PY
       - name: Commit changes
         run: |
@@ -60,6 +118,6 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add index.html
-            git commit -m "Fix Supabase sign-in transition"
+            git commit -m "Fix freeze after exiting app sections"
             git push
           fi
