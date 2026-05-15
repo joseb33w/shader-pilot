@@ -1,6 +1,6 @@
 name: Apply Auth Fix
 
-on:
+"on":
   workflow_dispatch:
 
 permissions:
