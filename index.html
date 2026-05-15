@@ -4,301 +4,22 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Shader Pilot</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #05010f; color: #f6edff; font-family: 'VT323', monospace; touch-action: none; }
-  body::before { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 30; background: repeating-linear-gradient(0deg, rgba(0,0,0,.22) 0, rgba(0,0,0,.22) 1px, transparent 1px, transparent 4px); mix-blend-mode: multiply; }
-  body::after { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 31; background: radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,.65) 100%); }
-  button, input { font: inherit; }
-  button { cursor: pointer; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: manipulation; }
-
-  .loading, .auth-screen, .game-screen, .overlay, .toast { position: fixed; }
-  .loading { inset: 0; z-index: 200; display: grid; place-items: center; background: #05010f; color: #ffeb80; font-family: 'Press Start 2P', monospace; font-size: .85rem; letter-spacing: 3px; }
-  .loading.hidden { display: none; }
-  .loading span::after { content: '...'; animation: dots 1s steps(4) infinite; }
-  @keyframes dots { 0%{content:''} 25%{content:'.'} 50%{content:'..'} 75%,100%{content:'...'} }
-
-  .auth-screen { inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 18px; background: radial-gradient(circle at 28% 20%, rgba(255,51,128,.28), transparent 28rem), radial-gradient(circle at 75% 72%, rgba(0,200,255,.22), transparent 30rem), linear-gradient(180deg, #0b0422, #05010f); }
-  .auth-card { width: min(400px,100%); padding: 24px 20px; background: rgba(10,4,30,.9); border: 2px solid #ff3380; box-shadow: 0 0 0 1px rgba(255,51,128,.35), 0 0 35px rgba(255,51,128,.38), inset 0 0 32px rgba(96,32,192,.18); }
-  .auth-title { font-family: 'Press Start 2P', monospace; color: #ffeb80; text-align: center; line-height: 1.5; letter-spacing: 2px; text-shadow: 2px 2px 0 #ff3380, 4px 4px 0 #6020c0; font-size: 1.05rem; }
-  .auth-sub { text-align: center; color: #80c0ff; letter-spacing: 2px; text-transform: uppercase; font-size: 1.1rem; margin: 8px 0 18px; }
-  .tabs { display: flex; gap: 4px; padding: 3px; background: rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.12); margin-bottom: 16px; }
-  .tab { flex: 1; border: 0; background: transparent; color: #85a7d8; padding: 9px; text-transform: uppercase; letter-spacing: 2px; font-size: 1rem; }
-  .tab.active { background: #ff3380; color: white; box-shadow: 0 0 16px rgba(255,51,128,.6); }
-  .field { margin-bottom: 13px; }
-  .field label { display: block; color: #ffeb80; text-transform: uppercase; letter-spacing: 2px; font-size: .95rem; margin-bottom: 4px; }
-  .field input { width: 100%; padding: 11px 12px; background: rgba(0,0,0,.62); border: 1px solid #6020c0; color: #f6edff; outline: 0; font-size: 1.15rem; letter-spacing: 1px; }
-  .field input:focus { border-color: #ff3380; box-shadow: 0 0 14px rgba(255,51,128,.45); }
-  .auth-btn, .menu-btn, .top-btn, .weapon-btn, .control-btn { border: 0; text-transform: uppercase; letter-spacing: 2px; color: white; }
-  .auth-btn { width: 100%; padding: 14px; margin-top: 4px; background: linear-gradient(180deg,#ff3380,#b01062); font-family: 'Press Start 2P', monospace; font-size: .8rem; box-shadow: 0 4px 0 #6010a0; }
-  .auth-btn:disabled { opacity: .45; }
-  .auth-msg { min-height: 24px; margin-top: 14px; text-align: center; letter-spacing: 1px; font-size: 1rem; }
-  .auth-msg.error { color: #ff80a0; } .auth-msg.success { color: #80ffc0; }
-
-  .game-screen { inset: 0; z-index: 1; display: none; background: #05010f; }
-  .game-screen.active { display: block; }
-  canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-  .hud { position: absolute; inset: 0; z-index: 10; pointer-events: none; }
-  .game-screen, .hud, .dpad, .controls, .control-btn, .dpad button { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: none; }
-  .hud-card { position: absolute; top: 12px; padding: 8px 12px; min-width: 150px; background: rgba(5,1,15,.62); border: 1px solid rgba(255,51,128,.42); backdrop-filter: blur(6px); font-family: 'Press Start 2P', monospace; font-size: .56rem; letter-spacing: 1.5px; color: #ffeb80; }
-  .hud-left { left: 12px; } .hud-right { right: 12px; text-align: right; }
-  .hud-row { display: flex; gap: 8px; justify-content: space-between; margin: 3px 0; }
-  .hud-label { color: #80c0ff; }
-  .hp-bar { height: 7px; background: rgba(0,0,0,.65); border: 1px solid rgba(255,128,160,.55); margin-top: 6px; }
-  .hp-fill { height: 100%; width: 100%; background: linear-gradient(90deg,#ff3340,#ffeb80); transition: width .18s; }
-  .weapon-readout { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); min-width: 280px; text-align: center; background: rgba(5,1,15,.62); border: 1px solid rgba(128,192,255,.42); color: #80c0ff; padding: 9px 14px; font-family: 'Press Start 2P', monospace; font-size: .58rem; letter-spacing: 2px; backdrop-filter: blur(6px); }
-  .weapon-readout strong { color: #ffeb80; }
-  .top-buttons { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; pointer-events: auto; }
-  .top-btn { padding: 8px 12px; background: rgba(5,1,15,.62); border: 1px solid rgba(128,192,255,.45); color: #80c0ff; backdrop-filter: blur(6px); font-size: .95rem; }
-  .top-btn.pause-btn { border-color: rgba(255,235,128,.6); color: #ffeb80; }
-  .top-btn.pause-btn.active { background: rgba(255,235,128,.18); }
-  .top-btn:active, .menu-btn:active, .weapon-btn:active, .control-btn:active { transform: translateY(1px); }
-  .controls { position: absolute; bottom: 22px; right: 18px; display: grid; gap: 10px; pointer-events: auto; }
-  .control-btn { width: 78px; height: 78px; border-radius: 50%; font-family: 'Press Start 2P', monospace; font-size: .52rem; }
-  .fire { background: radial-gradient(circle, rgba(255,80,128,.65), rgba(160,20,80,.22)); border: 2px solid #ff3380; color: #ffb6ca; box-shadow: 0 0 20px rgba(255,51,128,.35); }
-  .boost { background: radial-gradient(circle, rgba(128,192,255,.5), rgba(32,88,180,.18)); border: 2px solid #80c0ff; color: #cae8ff; }
-  .dpad { position: absolute; left: 18px; bottom: 22px; width: 138px; height: 138px; pointer-events: auto; }
-  .dpad button { position: absolute; width: 46px; height: 46px; border: 1px solid rgba(255,51,128,.5); background: rgba(5,1,15,.65); color: #ffeb80; font-size: 1.25rem; }
-  .up { left: 46px; top: 0; } .down { left: 46px; bottom: 0; } .left { left: 0; top: 46px; } .right { right: 0; top: 46px; }
-
-  .overlay { inset: 0; z-index: 80; display: none; align-items: center; justify-content: center; padding: 18px; background: rgba(5,1,15,.9); backdrop-filter: blur(7px); }
-  .overlay.active { display: flex; }
-  .menu-card { width: min(540px,100%); max-height: 92vh; overflow: auto; padding: 20px 16px; background: rgba(10,4,30,.96); border: 2px solid #6020c0; box-shadow: 0 0 0 1px rgba(96,32,192,.5), 0 0 36px rgba(96,32,192,.45); }
-  .pause-card { width: min(420px,100%); padding: 24px 20px; background: rgba(10,4,30,.96); border: 2px solid #ffeb80; box-shadow: 0 0 0 1px rgba(255,235,128,.4), 0 0 36px rgba(255,235,128,.35); }
-  .menu-title { text-align: center; color: #ffeb80; font-family: 'Press Start 2P', monospace; font-size: .95rem; letter-spacing: 2px; text-shadow: 2px 2px 0 #ff3380; }
-  .menu-sub { text-align: center; color: #80c0ff; text-transform: uppercase; letter-spacing: 2px; margin: 8px 0 14px; }
-  .pause-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0 16px; color: #80c0ff; }
-  .pause-stats .stat { background: rgba(96,32,192,.2); padding: 7px; text-align: center; font-size: .9rem; letter-spacing: 1px; }
-  .pause-stats .stat strong { color: #f6edff; display: block; font-size: 1.15rem; margin-top: 2px; }
-  .pause-actions { display: grid; gap: 8px; }
-  .weapon-grid { display: grid; gap: 10px; }
-  .weapon-card { background: rgba(0,0,0,.55); border: 1px solid rgba(255,51,128,.35); padding: 12px; }
-  .weapon-card.active { border-color: #ffeb80; box-shadow: 0 0 16px rgba(255,235,128,.35); }
-  .weapon-head { display: flex; justify-content: space-between; gap: 10px; align-items: start; }
-  .weapon-name { font-family: 'Press Start 2P', monospace; color: #ffeb80; font-size: .68rem; letter-spacing: 1.5px; line-height: 1.5; }
-  .weapon-price { color: #80ffc0; white-space: nowrap; }
-  .weapon-desc { color: #91b7eb; font-size: 1rem; margin: 7px 0; line-height: 1.25; }
-  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin: 8px 0; color: #80c0ff; }
-  .stat { background: rgba(96,32,192,.2); padding: 6px; text-align: center; font-size: .95rem; }
-  .stat strong { color: #f6edff; display: block; }
-  .ship-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; background: rgba(0,0,0,.45); border: 1px solid rgba(128,192,255,.3); padding: 10px; margin-bottom: 8px; }
-  .menu-btn { padding: 10px 12px; background: linear-gradient(180deg,#ff3380,#b01062); box-shadow: 0 3px 0 #6010a0; }
-  .menu-btn.secondary { background: rgba(96,32,192,.65); border: 1px solid #80c0ff; color: #80c0ff; box-shadow: none; }
-  .menu-btn.success { background: linear-gradient(180deg,#43d189,#208052); box-shadow: 0 3px 0 #105030; }
-  .menu-btn.warning { background: linear-gradient(180deg,#ffb000,#a06000); box-shadow: 0 3px 0 #604000; color: #fff; }
-  .menu-btn:disabled { opacity: .4; cursor: not-allowed; }
-  .weapon-btn { width: 100%; padding: 10px; margin-top: 6px; background: rgba(96,32,192,.65); border: 1px solid #80c0ff; color: #80c0ff; }
-  .weapon-btn.buy { background: linear-gradient(180deg,#43d189,#208052); color: white; border: 0; }
-  .close-btn { width: 100%; margin-top: 12px; padding: 12px; background: transparent; border: 1px solid rgba(128,192,255,.45); color: #80c0ff; text-transform: uppercase; letter-spacing: 3px; }
-  .toast { top: 78px; left: 50%; transform: translateX(-50%); z-index: 160; background: rgba(10,4,30,.96); border: 1px solid #ffeb80; color: #ffeb80; padding: 10px 18px; letter-spacing: 2px; text-transform: uppercase; opacity: 0; transition: opacity .25s; pointer-events: none; }
-  .toast.show { opacity: 1; }
-
-  @media (max-width: 620px) {
-    .hud-card { min-width: 118px; font-size: .48rem; padding: 7px 8px; }
-    .top-buttons { top: 78px; }
-    .top-btn { padding: 7px 9px; font-size: .85rem; }
-    .weapon-readout { bottom: 176px; min-width: 245px; font-size: .5rem; }
-    .control-btn { width: 68px; height: 68px; }
-    .dpad { width: 126px; height: 126px; }
-    .dpad button { width: 42px; height: 42px; }
-    .up { left: 42px; } .down { left: 42px; } .left { top: 42px; } .right { top: 42px; }
-    .stats { grid-template-columns: repeat(2,1fr); }
-  }
+  html,body{height:100%;margin:0;background:#05010f;color:#ffeb80;font-family:monospace;display:grid;place-items:center} .msg{text-align:center;letter-spacing:2px}
 </style>
 </head>
 <body>
-<div class="loading" id="loading"><span>INITIALIZING</span></div>
-<div class="toast" id="toast"></div>
+<div class="msg">INITIALIZING SHADER PILOT...</div>
+<script>
+(async () => {
+  try {
+    const source = 'https://raw.githubusercontent.com/joseb33w/shader-pilot/fdf6bc4/index.html';
+    let html = await fetch(source, { cache: 'no-store' }).then(r => {
+      if (!r.ok) throw new Error('Unable to load game shell');
+      return r.text();
+    });
 
-<section class="auth-screen" id="authScreen">
-  <div class="auth-card">
-    <div class="auth-title">SHADER<br>PILOT</div>
-    <div class="auth-sub">// laser weapons lab //</div>
-    <div class="tabs">
-      <button class="tab active" type="button" data-tab="signin">Sign In</button>
-      <button class="tab" type="button" data-tab="signup">Sign Up</button>
-    </div>
-    <form id="authForm">
-      <div class="field" id="callsignField" style="display:none"><label>Callsign</label><input id="callsignInput" maxlength="20" autocomplete="off"></div>
-      <div class="field"><label>Email</label><input id="emailInput" type="email" required autocomplete="email"></div>
-      <div class="field"><label>Password</label><input id="passwordInput" type="password" required minlength="6" autocomplete="current-password"></div>
-      <button class="auth-btn" id="authSubmit" type="submit">ENGAGE</button>
-    </form>
-    <div class="auth-msg" id="authMsg"></div>
-  </div>
-</section>
-
-<section class="game-screen" id="gameScreen">
-  <canvas id="gameCanvas"></canvas>
-  <div class="hud">
-    <div class="hud-card hud-left">
-      <div class="hud-row"><span class="hud-label">PILOT</span><span id="hudCallsign">---</span></div>
-      <div class="hud-row"><span class="hud-label">SHIP</span><span id="hudShip">STRIKER</span></div>
-      <div class="hp-bar"><div class="hp-fill" id="hpFill"></div></div>
-    </div>
-    <div class="hud-card hud-right">
-      <div class="hud-row"><span class="hud-label">PTS</span><span id="hudPoints">0</span></div>
-      <div class="hud-row"><span class="hud-label">DIST</span><span id="hudDist">0</span></div>
-      <div class="hud-row"><span class="hud-label">KILLS</span><span id="hudKills">0</span></div>
-      <div class="hud-row"><span class="hud-label">CR</span><span id="hudCredits">0</span></div>
-    </div>
-    <div class="top-buttons">
-      <button class="top-btn pause-btn" id="pauseBtn" type="button" title="Pause (P)">❚❚ Pause</button>
-      <button class="top-btn" id="weaponsBtn" type="button">Weapons</button>
-      <button class="top-btn" id="hangarBtn" type="button">Hangar</button>
-      <button class="top-btn" id="signoutBtn" type="button">Exit</button>
-    </div>
-    <div class="weapon-readout" id="weaponReadout">WEAPON: <strong>PULSE LASER</strong></div>
-    <div class="dpad" aria-label="movement controls">
-      <button class="up" data-key="up" type="button">▲</button>
-      <button class="down" data-key="down" type="button">▼</button>
-      <button class="left" data-key="left" type="button">◀</button>
-      <button class="right" data-key="right" type="button">▶</button>
-    </div>
-    <div class="controls">
-      <button class="control-btn fire" id="fireBtn" type="button">FIRE</button>
-      <button class="control-btn boost" id="boostBtn" type="button">BOOST</button>
-    </div>
-  </div>
-</section>
-
-<div class="overlay" id="pauseMenu">
-  <div class="pause-card">
-    <div class="menu-title">PAUSED</div>
-    <div class="menu-sub">// take a breather //</div>
-    <div class="pause-stats">
-      <div class="stat">PTS<strong id="pausePoints">0</strong></div>
-      <div class="stat">DIST<strong id="pauseDist">0</strong></div>
-      <div class="stat">KILLS<strong id="pauseKills">0</strong></div>
-    </div>
-    <div class="pause-actions">
-      <button class="menu-btn success" id="resumeBtn" type="button">▶ Resume</button>
-      <button class="menu-btn secondary" id="pauseWeapons" type="button">Open Weapons</button>
-      <button class="menu-btn secondary" id="pauseHangar" type="button">Open Hangar</button>
-      <button class="menu-btn warning" id="pauseRestart" type="button">↻ Restart Run</button>
-    </div>
-  </div>
-</div>
-
-<div class="overlay" id="weaponsMenu">
-  <div class="menu-card">
-    <div class="menu-title">WEAPON STORE</div>
-    <div class="menu-sub">// buy beams • switch loadouts //</div>
-    <div id="weaponsContent" class="weapon-grid"></div>
-    <button class="close-btn" id="weaponsClose" type="button">Close</button>
-  </div>
-</div>
-
-<div class="overlay" id="hangarMenu">
-  <div class="menu-card">
-    <div class="menu-title">HANGAR</div>
-    <div class="menu-sub">// ship selection //</div>
-    <div id="hangarContent"></div>
-    <button class="close-btn" id="hangarClose" type="button">Close</button>
-  </div>
-</div>
-
-<div class="overlay" id="gameOverMenu">
-  <div class="menu-card">
-    <div class="menu-title" style="color:#ff80a0">SHIP DESTROYED</div>
-    <div class="menu-sub">// run complete //</div>
-    <div class="stats">
-      <div class="stat">POINTS<strong id="goPoints">0</strong></div>
-      <div class="stat">DIST<strong id="goDist">0</strong></div>
-      <div class="stat">KILLS<strong id="goKills">0</strong></div>
-      <div class="stat">CREDITS<strong id="goCredits">0</strong></div>
-      <div class="stat">BEST DIST<strong id="goBest">0</strong></div>
-      <div class="stat">BEST PTS<strong id="goBestScore">0</strong></div>
-    </div>
-    <button class="menu-btn success" id="restartBtn" type="button">Relaunch</button>
-    <button class="menu-btn secondary" id="gameOverWeapons" type="button">Open Weapons</button>
-  </div>
-</div>
-
-<script type="module">
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-
-const SUPABASE_URL = 'https://xhhmxabftbyxrirvvihn.supabase.co';
-const SUPABASE_ANON = 'sb_publishable_NZHoIxqqpSvVBP8MrLHCYA_gmg1AbN-';
-const PILOTS_TABLE = 'uNMexs7BYTXQ2_shader_pilot_pilots';
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
-
-const SHIPS = {
-  striker: { name: 'STRIKER', price: 0, speed: 320, hp: 100, color: '#ff3380', accent: '#ffeb80', desc: 'Balanced fighter' },
-  hornet: { name: 'HORNET', price: 800, speed: 395, hp: 85, color: '#80c0ff', accent: '#ffeb80', desc: 'Fast scout' },
-  vanguard: { name: 'VANGUARD', price: 1800, speed: 285, hp: 165, color: '#40d088', accent: '#80c0ff', desc: 'Armored gunship' },
-  phantom: { name: 'PHANTOM', price: 4200, speed: 430, hp: 120, color: '#c060ff', accent: '#ff3380', desc: 'Elite interceptor' }
-};
-
-const WEAPONS = {
-  pulse: { name: 'PULSE LASER', price: 0, color: '#80ff80', glow: '#30ff90', cooldown: .18, damage: 1, speed: 880, beams: 2, spread: .015, width: 4, pierce: 0, desc: 'Twin straight beams. Reliable and rapid.' },
-  scatter: { name: 'PRISM SCATTER', price: 650, color: '#4ee7ff', glow: '#9bf8ff', cooldown: .34, damage: .75, speed: 760, beams: 5, spread: .14, width: 3, pierce: 0, desc: 'Five angled lasers fan across the screen.' },
-  rail: { name: 'RAIL LANCE', price: 1400, color: '#d58bff', glow: '#f0c4ff', cooldown: .55, damage: 2.8, speed: 1180, beams: 1, spread: 0, width: 9, pierce: 2, desc: 'Thick piercing beam that punches through targets.' },
-  plasma: { name: 'PLASMA ORB', price: 2400, color: '#ffb000', glow: '#ff5b21', cooldown: .48, damage: 1.7, speed: 560, beams: 1, spread: 0, width: 14, pierce: 0, splash: 62, desc: 'Slow glowing bolt that bursts in a splash radius.' },
-  ion: { name: 'ION RIPPER', price: 3800, color: '#45ffdf', glow: '#bafff4', cooldown: .26, damage: 1.25, speed: 830, beams: 3, spread: .07, width: 5, pierce: 1, zigzag: true, desc: 'Electric beams weave while piercing one enemy.' },
-  swarm: { name: 'HOMING SWARM', price: 3200, color: '#ff7ad0', glow: '#ffd6f0', cooldown: .42, damage: 1.4, speed: 540, beams: 4, spread: .35, width: 5, pierce: 0, homing: true, turnRate: 4.5, desc: 'Four guided missiles that hunt the nearest target.' },
-  tesla: { name: 'TESLA ARC', price: 5200, color: '#fffa6b', glow: '#fff8a8', cooldown: .32, damage: 1.6, speed: 1020, beams: 1, spread: 0, width: 6, pierce: 0, chain: 3, chainRange: 220, desc: 'Lightning that jumps between up to 3 nearby foes.' },
-  singularity: { name: 'SINGULARITY', price: 7800, color: '#b070ff', glow: '#e0c0ff', cooldown: 1.1, damage: .9, speed: 360, beams: 1, spread: 0, width: 16, pierce: 0, gravity: true, gravityRadius: 200, gravityPull: 380, gravityLife: 1.6, desc: 'Black hole that pulls enemies in and crushes them.' },
-  flak: { name: 'FLAK BURST', price: 1900, color: '#ffae45', glow: '#ffe2a8', cooldown: .58, damage: 1.1, speed: 720, beams: 8, spread: .28, width: 4, pierce: 0, scatter: true, desc: 'Eight close-range pellets that ricochet on impact.' },
-  wave: { name: 'WAVE CANNON', price: 6400, color: '#65ffe2', glow: '#ccfff5', cooldown: .8, damage: 2.2, speed: 640, beams: 1, spread: 0, width: 10, pierce: 99, expand: true, expandRate: 95, desc: 'Sine wave that grows wider as it travels. Hits everything.' }
-};
-
-const els = {
-  loading: document.getElementById('loading'), toast: document.getElementById('toast'), auth: document.getElementById('authScreen'), game: document.getElementById('gameScreen'),
-  authForm: document.getElementById('authForm'), authTabs: document.querySelectorAll('[data-tab]'), callsignField: document.getElementById('callsignField'), callsign: document.getElementById('callsignInput'), email: document.getElementById('emailInput'), password: document.getElementById('passwordInput'), authSubmit: document.getElementById('authSubmit'), authMsg: document.getElementById('authMsg'),
-  canvas: document.getElementById('gameCanvas'), hudCallsign: document.getElementById('hudCallsign'), hudShip: document.getElementById('hudShip'), hudPoints: document.getElementById('hudPoints'), hudDist: document.getElementById('hudDist'), hudKills: document.getElementById('hudKills'), hudCredits: document.getElementById('hudCredits'), hpFill: document.getElementById('hpFill'), weaponReadout: document.getElementById('weaponReadout'),
-  signout: document.getElementById('signoutBtn'), fire: document.getElementById('fireBtn'), boost: document.getElementById('boostBtn'), weaponsBtn: document.getElementById('weaponsBtn'), weaponsMenu: document.getElementById('weaponsMenu'), weaponsContent: document.getElementById('weaponsContent'), weaponsClose: document.getElementById('weaponsClose'),
-  hangarBtn: document.getElementById('hangarBtn'), hangarMenu: document.getElementById('hangarMenu'), hangarContent: document.getElementById('hangarContent'), hangarClose: document.getElementById('hangarClose'), gameOver: document.getElementById('gameOverMenu'), restart: document.getElementById('restartBtn'), gameOverWeapons: document.getElementById('gameOverWeapons'), goPoints: document.getElementById('goPoints'), goDist: document.getElementById('goDist'), goKills: document.getElementById('goKills'), goCredits: document.getElementById('goCredits'), goBest: document.getElementById('goBest'), goBestScore: document.getElementById('goBestScore'),
-  pauseBtn: document.getElementById('pauseBtn'), pauseMenu: document.getElementById('pauseMenu'), resumeBtn: document.getElementById('resumeBtn'), pauseWeapons: document.getElementById('pauseWeapons'), pauseHangar: document.getElementById('pauseHangar'), pauseRestart: document.getElementById('pauseRestart'), pausePoints: document.getElementById('pausePoints'), pauseDist: document.getElementById('pauseDist'), pauseKills: document.getElementById('pauseKills')
-};
-
-let authMode = 'signin';
-let currentUser = null;
-let currentPilot = null;
-let game = null;
-let toastTimer = null;
-let authTransitioning = false;
-let activeSessionUserId = null;
-
-function showToast(msg) {
-  els.toast.textContent = msg;
-  els.toast.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => els.toast.classList.remove('show'), 1800);
-}
-
-function withTimeout(promise, ms, label) {
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} timed out. Please try again.`)), ms);
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
-
-// ---- Menu/overlay tracking: pause game loop and clear stuck inputs ----
-function anyOverlayOpen() {
-  return els.weaponsMenu.classList.contains('active') ||
-         els.hangarMenu.classList.contains('active') ||
-         els.gameOver.classList.contains('active') ||
-         els.pauseMenu.classList.contains('active');
-}
-function clearGameInputs() {
-  if (!game) return;
-  game.input.fire = false;
-  game.input.boost = false;
-  game.touch.up = false; game.touch.down = false; game.touch.left = false; game.touch.right = false;
-  game.keys = {};
-}
-function pauseGameForOverlay() {
-  if (!game) return;
-  clearGameInputs();
-  game.paused = true;
-  els.pauseBtn.classList.add('active');
-}
-function resumeGameAfterOverlay() {
+    const oldResume = `function resumeGameAfterOverlay() {
   if (!game) return;
   if (anyOverlayOpen()) return;
   clearGameInputs();
@@ -306,713 +27,89 @@ function resumeGameAfterOverlay() {
   game.last = performance.now();
   game.paused = false;
   els.pauseBtn.classList.remove('active');
-}
-// Swap from one overlay directly to another without resuming the game in between.
-// Prevents stale-input / loop-restart hiccups that look like a freeze.
-function switchOverlay(closeEl, openFn) {
-  if (closeEl && closeEl.classList) closeEl.classList.remove('active');
-  // Keep game.paused = true; just clear any held inputs
+}`;
+    const newResume = `let overlayResumeTimer = null;
+function forceResumeGameFromOverlay() {
+  if (!game || anyOverlayOpen()) return;
   clearGameInputs();
-  // Defer the open by a frame so the DOM commits the close first (smoother on iOS WebView)
-  requestAnimationFrame(() => { try { openFn(); } catch (e) { console.error('Overlay switch error:', e.message); } });
+  // Reset timing so we don't get a giant dt jump after a menu/section closes.
+  game.last = performance.now();
+  game.paused = false;
+  els.pauseBtn.classList.remove('active');
+  // In some mobile WebViews RAF can stall after closing fixed overlays.
+  // Cancel the pending frame and queue a clean one so the run always resumes.
+  if (game.running && !game.dead) {
+    try { cancelAnimationFrame(game.raf); } catch (_) {}
+    game.raf = requestAnimationFrame(game.loop);
+  }
 }
-
-function openPauseMenu() {
-  if (!game || game.dead) return;
-  pauseGameForOverlay();
-  els.pausePoints.textContent = game.runPoints || 0;
-  els.pauseDist.textContent = Math.floor(game.distance || 0);
-  els.pauseKills.textContent = game.runKills || 0;
-  els.pauseMenu.classList.add('active');
-}
-function closePauseMenu() {
-  els.pauseMenu.classList.remove('active');
-  resumeGameAfterOverlay();
-}
-
-function defaultWeapons() { return { owned: ['pulse'], active: 'pulse', levels: {} }; }
-function weaponState() {
-  if (!currentPilot) return defaultWeapons();
-  const up = currentPilot.upgrades || {};
-  if (!up.weapons || !Array.isArray(up.weapons.owned)) up.weapons = defaultWeapons();
-  if (!up.weapons.active || !WEAPONS[up.weapons.active]) up.weapons.active = 'pulse';
-  if (!up.weapons.owned.includes('pulse')) up.weapons.owned.unshift('pulse');
-  currentPilot.upgrades = up;
-  return up.weapons;
-}
-function activeWeapon() { return WEAPONS[weaponState().active] || WEAPONS.pulse; }
-
-// Save with automatic retry on Supabase schema-cache hiccups (PGRST204 / "Could not find column")
-async function savePilotPartial(patch) {
-  if (!currentPilot) return { ok: false, error: 'no pilot' };
-  // Snapshot previous values so we can roll back if the write fails
-  const previous = {};
-  for (const k of Object.keys(patch)) previous[k] = currentPilot[k];
-  // Apply locally immediately so UI/game pick it up
-  Object.assign(currentPilot, patch);
-  if (!currentPilot.id) return { ok: true, local: true };
-
-  const tryOnce = async () => {
-    const { data, error } = await withTimeout(
-      supabase.from(PILOTS_TABLE).update(patch).eq('id', currentPilot.id).select().single(),
-      8000, 'Pilot save'
-    );
-    if (error) throw error;
-    return data;
+function resumeGameAfterOverlay() {
+  if (!game) return;
+  if (overlayResumeTimer) clearTimeout(overlayResumeTimer);
+  const resume = () => {
+    if (anyOverlayOpen()) return;
+    forceResumeGameFromOverlay();
   };
+  requestAnimationFrame(resume);
+  // Fallback for Safari/iOS cases where the first frame after an overlay close is dropped.
+  overlayResumeTimer = setTimeout(resume, 140);
+}`;
+    html = html.replace(oldResume, newResume);
 
-  let lastErr = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const data = await tryOnce();
-      if (data) Object.assign(currentPilot, data);
-      return { ok: true };
-    } catch (err) {
-      lastErr = err;
-      const msg = (err && (err.message || err.toString())) || '';
-      // PGRST204 = schema cache hasn't refreshed yet after a column add. Wait and retry.
-      const isSchemaCache = /schema cache|PGRST204|Could not find the/i.test(msg);
-      if (!isSchemaCache) break;
-      await new Promise(r => setTimeout(r, 1200 * (attempt + 1)));
-    }
-  }
-  // Roll back local state
-  for (const k of Object.keys(previous)) currentPilot[k] = previous[k];
-  console.error('Pilot save error:', lastErr?.message || lastErr);
-  showToast('SAVE FAILED');
-  return { ok: false, error: lastErr?.message || String(lastErr) };
-}
+    html = html.replace(
+      `this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.dead = false; this.running = false; this.paused = false;`,
+      `this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.dead = false; this.running = false; this.paused = false; this.frameWatch = null; this.lastFrameSeen = performance.now();`
+    );
 
-async function loadPilot() {
-  try {
-    const { data, error } = await withTimeout(supabase.from(PILOTS_TABLE).select('*').limit(1), 8000, 'Pilot lookup');
-    if (error) throw error;
-    if (data && data.length) currentPilot = data[0];
-    else {
-      const callsign = (currentUser.email || 'PILOT').split('@')[0].toUpperCase().slice(0, 14);
-      const { data: created, error: createError } = await withTimeout(supabase.from(PILOTS_TABLE).insert({ callsign, email: currentUser.email, best_score: 0, best_distance: 0, runs_completed: 0, credits: 500, kills: 0, active_ship: 'striker', owned_ships: ['striker'], upgrades: { weapons: defaultWeapons() } }).select().single(), 8000, 'Pilot creation');
-      if (createError) throw createError;
-      currentPilot = created;
-    }
-    if (!currentPilot.owned_ships) currentPilot.owned_ships = ['striker'];
-    if (!currentPilot.active_ship) currentPilot.active_ship = 'striker';
-    if (!currentPilot.upgrades) currentPilot.upgrades = {};
-    if (currentPilot.credits == null) currentPilot.credits = 500;
-    if (currentPilot.kills == null) currentPilot.kills = 0;
-    if (currentPilot.best_score == null) currentPilot.best_score = 0;
-    weaponState();
-  } catch (err) {
-    console.error('Pilot load error:', err.message);
-    currentPilot = { callsign: 'PILOT', best_score: 0, best_distance: 0, credits: 500, kills: 0, active_ship: 'striker', owned_ships: ['striker'], upgrades: { weapons: defaultWeapons() } };
-  }
-}
-
-function updateHud() {
-  const ship = SHIPS[currentPilot?.active_ship || 'striker'] || SHIPS.striker;
-  const weapon = activeWeapon();
-  els.hudCallsign.textContent = (currentPilot?.callsign || 'PILOT').toUpperCase();
-  els.hudShip.textContent = ship.name;
-  els.hudPoints.textContent = game && !game.dead ? game.runPoints || 0 : currentPilot?.best_score || 0;
-  els.hudCredits.textContent = currentPilot?.credits || 0;
-  els.hudKills.textContent = currentPilot?.kills || 0;
-  els.weaponReadout.innerHTML = `WEAPON: <strong>${weapon.name}</strong> <span style="color:${weapon.color}">◆</span>`;
-}
-
-els.authTabs.forEach(tab => tab.addEventListener('click', () => {
-  els.authTabs.forEach(t => t.classList.toggle('active', t === tab));
-  authMode = tab.dataset.tab;
-  els.callsignField.style.display = authMode === 'signup' ? 'block' : 'none';
-  els.authSubmit.textContent = authMode === 'signup' ? 'LAUNCH' : 'ENGAGE';
-  els.authMsg.textContent = ''; els.authMsg.className = 'auth-msg';
-}));
-
-els.authForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  els.authSubmit.disabled = true;
-  els.authMsg.className = 'auth-msg';
-  els.authMsg.textContent = authMode === 'signup' ? 'CREATING PILOT...' : 'AUTHENTICATING...';
-  try {
-    const email = els.email.value.trim();
-    const password = els.password.value;
-    if (authMode === 'signup') {
-      const callsign = els.callsign.value.trim();
-      if (!callsign) throw new Error('Callsign required');
-      const { data, error } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: 'https://sling-gogiapp.web.app/email-confirmed.html' } });
-      if (error) throw error;
-      if (data.user) await withTimeout(supabase.from(PILOTS_TABLE).insert({ callsign, email, best_score: 0, best_distance: 0, runs_completed: 0, credits: 500, kills: 0, active_ship: 'striker', owned_ships: ['striker'], upgrades: { weapons: defaultWeapons() } }), 8000, 'Pilot registration');
-      els.authMsg.className = 'auth-msg success';
-      els.authMsg.textContent = 'PILOT REGISTERED. CHECK EMAIL.';
-    } else {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
-      if (!data?.session?.user) throw new Error('No active session returned');
-      els.authMsg.className = 'auth-msg success';
-      els.authMsg.textContent = 'LOADING PILOT...';
-      await completeSignIn(data.session.user, 'LOADING PILOT...');
-    }
-  } catch (err) {
-    els.authMsg.className = 'auth-msg error';
-    els.authMsg.textContent = (err.message || 'AUTH FAILED').toUpperCase();
-  } finally { els.authSubmit.disabled = false; }
-});
-
-els.signout.addEventListener('click', async () => { if (game) game.stop(); game = null; await supabase.auth.signOut(); });
-
-// Pause button + pause menu
-els.pauseBtn.addEventListener('click', () => {
-  if (els.pauseMenu.classList.contains('active')) closePauseMenu();
-  else openPauseMenu();
-});
-els.resumeBtn.addEventListener('click', () => closePauseMenu());
-els.pauseWeapons.addEventListener('click', () => switchOverlay(els.pauseMenu, openWeapons));
-els.pauseHangar.addEventListener('click', () => switchOverlay(els.pauseMenu, openHangar));
-els.pauseRestart.addEventListener('click', () => {
-  els.pauseMenu.classList.remove('active');
-  resumeGameAfterOverlay();
-  if (game) game.respawn();
-});
-
-// Menu open/close handlers — pause the game and clear stuck inputs every time
-els.weaponsBtn.addEventListener('click', () => { openWeapons(); });
-els.weaponsClose.addEventListener('click', () => { els.weaponsMenu.classList.remove('active'); resumeGameAfterOverlay(); });
-els.hangarBtn.addEventListener('click', () => { openHangar(); });
-els.hangarClose.addEventListener('click', () => { els.hangarMenu.classList.remove('active'); resumeGameAfterOverlay(); });
-els.restart.addEventListener('click', () => { els.gameOver.classList.remove('active'); resumeGameAfterOverlay(); if (game) game.respawn(); });
-// Death -> Weapons: switch overlays without resuming (game is dead, must stay paused for menu)
-els.gameOverWeapons.addEventListener('click', () => switchOverlay(els.gameOver, openWeapons));
-
-// Keyboard: Escape closes overlays; P toggles pause
-window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') {
-    if (els.pauseMenu.classList.contains('active')) { closePauseMenu(); return; }
-    if (els.weaponsMenu.classList.contains('active')) { els.weaponsMenu.classList.remove('active'); resumeGameAfterOverlay(); return; }
-    if (els.hangarMenu.classList.contains('active')) { els.hangarMenu.classList.remove('active'); resumeGameAfterOverlay(); return; }
-  }
-  if ((e.key === 'p' || e.key === 'P') && els.game.classList.contains('active') && !els.gameOver.classList.contains('active')) {
-    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
-    if (els.pauseMenu.classList.contains('active')) closePauseMenu();
-    else if (!anyOverlayOpen()) openPauseMenu();
-    e.preventDefault();
-  }
-});
-
-function openWeapons() { pauseGameForOverlay(); renderWeapons(); els.weaponsMenu.classList.add('active'); }
-function renderWeapons() {
-  const ws = weaponState();
-  let html = '';
-  Object.entries(WEAPONS).forEach(([key, weapon]) => {
-    const owned = ws.owned.includes(key);
-    const active = ws.active === key;
-    html += `<article class="weapon-card ${active ? 'active' : ''}">
-      <div class="weapon-head"><div class="weapon-name">${weapon.name} ${active ? '◆ ACTIVE' : ''}</div><div class="weapon-price">${owned ? 'OWNED' : weapon.price + ' CR'}</div></div>
-      <p class="weapon-desc">${weapon.desc}</p>
-      <div class="stats">
-        <div class="stat">DMG<strong>${weapon.damage}</strong></div><div class="stat">BEAMS<strong>${weapon.beams}</strong></div><div class="stat">RATE<strong>${(1/weapon.cooldown).toFixed(1)}/s</strong></div><div class="stat">PIERCE<strong>${weapon.pierce}</strong></div>
-      </div>
-      ${owned ? `<button class="weapon-btn" data-select="${key}" ${active ? 'disabled' : ''} type="button">${active ? 'Equipped' : 'Equip Weapon'}</button>` : `<button class="weapon-btn buy" data-buy="${key}" ${currentPilot.credits < weapon.price ? 'disabled' : ''} type="button">${currentPilot.credits >= weapon.price ? 'Buy Weapon' : 'Need Credits'}</button>`}
-    </article>`;
-  });
-  els.weaponsContent.innerHTML = html;
-  els.weaponsContent.querySelectorAll('[data-buy]').forEach(btn => btn.addEventListener('click', async () => {
-    const key = btn.dataset.buy; const weapon = WEAPONS[key];
-    if (!weapon || currentPilot.credits < weapon.price) return;
-    btn.disabled = true; btn.textContent = 'BUYING...';
-    const currentWS = weaponState();
-    const nextUpgrades = JSON.parse(JSON.stringify(currentPilot.upgrades || {}));
-    nextUpgrades.weapons = {
-      owned: Array.from(new Set([...(currentWS.owned || []), key])),
-      active: key,
-      levels: currentWS.levels || {}
-    };
-    const result = await savePilotPartial({
-      credits: currentPilot.credits - weapon.price,
-      upgrades: nextUpgrades
-    });
-    if (result.ok) showToast(`${weapon.name} PURCHASED`);
-    // savePilotPartial already rolled back local state on failure and toasted
-    updateHud(); renderWeapons();
-  }));
-  els.weaponsContent.querySelectorAll('[data-select]').forEach(btn => btn.addEventListener('click', async () => {
-    const key = btn.dataset.select;
-    const currentWS = weaponState();
-    const nextUpgrades = JSON.parse(JSON.stringify(currentPilot.upgrades || {}));
-    nextUpgrades.weapons = {
-      owned: currentWS.owned,
-      active: key,
-      levels: currentWS.levels || {}
-    };
-    const result = await savePilotPartial({ upgrades: nextUpgrades });
-    if (result.ok) showToast(`${WEAPONS[key].name} EQUIPPED`);
-    updateHud(); renderWeapons();
-  }));
-}
-
-function openHangar() { pauseGameForOverlay(); renderHangar(); els.hangarMenu.classList.add('active'); }
-function renderHangar() {
-  const owned = currentPilot.owned_ships || ['striker'];
-  let html = `<div class="weapon-desc" style="text-align:center;color:#ffeb80">CREDITS: ${currentPilot.credits}</div>`;
-  Object.entries(SHIPS).forEach(([key, ship]) => {
-    const isOwned = owned.includes(key); const active = currentPilot.active_ship === key;
-    html += `<div class="ship-row">
-      <div><div class="weapon-name">${ship.name} ${active ? '◆ ACTIVE' : ''}</div><div class="weapon-desc">${ship.desc} • SPD ${ship.speed} • HP ${ship.hp}</div></div>
-      ${isOwned ? `<button class="menu-btn secondary" data-equip="${key}" ${active ? 'disabled' : ''} type="button">${active ? 'Active' : 'Equip'}</button>` : `<button class="menu-btn success" data-shipbuy="${key}" ${currentPilot.credits < ship.price ? 'disabled' : ''} type="button">${ship.price} CR</button>`}
-    </div>`;
-  });
-  els.hangarContent.innerHTML = html;
-  els.hangarContent.querySelectorAll('[data-equip]').forEach(btn => btn.addEventListener('click', async () => {
-    const result = await savePilotPartial({ active_ship: btn.dataset.equip });
-    if (result.ok) updateHud(), game && game.applyShip();
-    renderHangar();
-  }));
-  els.hangarContent.querySelectorAll('[data-shipbuy]').forEach(btn => btn.addEventListener('click', async () => {
-    const key = btn.dataset.shipbuy; const ship = SHIPS[key];
-    if (currentPilot.credits < ship.price) return;
-    btn.disabled = true; btn.textContent = 'BUYING...';
-    const result = await savePilotPartial({ credits: currentPilot.credits - ship.price, owned_ships: Array.from(new Set([...owned, key])), active_ship: key });
-    if (result.ok) showToast(`${ship.name} ACQUIRED`);
-    updateHud(); if (game) game.applyShip(); renderHangar();
-  }));
-}
-
-class ShaderPilotGame {
-  constructor(canvas) {
-    this.canvas = canvas; this.ctx = canvas.getContext('2d');
-    this.keys = {}; this.touch = { up:false, down:false, left:false, right:false };
-    this.input = { fire:false, boost:false };
-    this.player = { x: 0, y: 0, vx: 0, vy: 0, hp: 100, maxHp: 100 };
-    this.stars = []; this.lasers = []; this.enemyLasers = []; this.enemies = []; this.particles = []; this.gravityWells = []; this.arcs = [];
-    this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.dead = false; this.running = false; this.paused = false;
-    this.resize(); this.createStars(); this.applyShip(); this.bindControls();
-    window.addEventListener('resize', () => this.resize());
-    window.addEventListener('pointerup', () => { this.input.fire = false; this.input.boost = false; }, true);
-    window.addEventListener('pointercancel', () => { this.input.fire = false; this.input.boost = false; }, true);
-    window.addEventListener('blur', () => { this.input.fire = false; this.input.boost = false; this.touch.up=this.touch.down=this.touch.left=this.touch.right=false; this.keys = {}; });
-    document.addEventListener('visibilitychange', () => {
-      if (document.hidden) {
-        this.input.fire = false; this.input.boost = false; this.keys = {};
-        if (this.running && !this.dead && !anyOverlayOpen()) openPauseMenu();
-      } else { this.last = performance.now(); }
-    });
-  }
-  resize() { this.w = this.canvas.width = Math.floor(window.innerWidth * devicePixelRatio); this.h = this.canvas.height = Math.floor(window.innerHeight * devicePixelRatio); this.ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0); this.w = window.innerWidth; this.h = window.innerHeight; this.player.x = this.w * .22; this.player.y = this.player.y || this.h * .5; }
-  createStars() { this.stars = Array.from({length: 180}, () => ({ x: Math.random()*this.w, y: Math.random()*this.h, z: .25 + Math.random()*1.8, color: Math.random()>.7 ? '#ff9bd1' : (Math.random()>.45 ? '#9fd7ff' : '#fff') })); }
-  applyShip() { const s = SHIPS[currentPilot.active_ship] || SHIPS.striker; this.ship = s; this.player.maxHp = s.hp; this.player.hp = Math.min(this.player.hp || s.hp, s.hp); this.updateHp(); }
-  bindControls() {
-    window.addEventListener('keydown', e => { this.keys[e.key.toLowerCase()] = true; if ([' ','arrowup','arrowdown','arrowleft','arrowright'].includes(e.key.toLowerCase())) e.preventDefault(); });
-    window.addEventListener('keyup', e => { this.keys[e.key.toLowerCase()] = false; });
-    const setHold = (el, on, off) => {
-      const block = e => { e.preventDefault(); e.stopPropagation(); };
-      const a = e => {
-        block(e);
-        if (el.setPointerCapture && e.pointerId != null) { try { el.setPointerCapture(e.pointerId); } catch (_) {} }
-        on();
-      };
-      const b = e => {
-        block(e);
-        if (el.releasePointerCapture && e.pointerId != null) { try { el.releasePointerCapture(e.pointerId); } catch (_) {} }
-        off();
-      };
-      el.addEventListener('pointerdown', a, { passive: false });
-      el.addEventListener('pointerup', b, { passive: false });
-      el.addEventListener('pointercancel', b, { passive: false });
-      el.addEventListener('pointerleave', b, { passive: false });
-      el.addEventListener('contextmenu', block, { passive: false });
-      el.addEventListener('selectstart', block, { passive: false });
-      el.addEventListener('dragstart', block, { passive: false });
-    };
-    setHold(els.fire, () => this.input.fire = true, () => this.input.fire = false);
-    setHold(els.boost, () => this.input.boost = true, () => this.input.boost = false);
-    document.querySelectorAll('[data-key]').forEach(btn => setHold(btn, () => this.touch[btn.dataset.key] = true, () => this.touch[btn.dataset.key] = false));
-  }
-  start() { this.running = true; this.paused = false; this.last = performance.now(); for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160); this.loop(); }
-  stop() { this.running = false; cancelAnimationFrame(this.raf); }
-  respawn() {
-    this.dead = false;
+    html = html.replace(
+      `start() { this.running = true; this.paused = false; this.last = performance.now(); for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160); this.loop(); }
+  stop() { this.running = false; cancelAnimationFrame(this.raf); }`,
+      `start() {
+    this.running = true;
     this.paused = false;
-    this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0;
-    this.lasers = []; this.enemyLasers = []; this.enemies = []; this.particles = []; this.gravityWells = []; this.arcs = [];
-    this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0;
-    this.player.vx = 0; this.player.vy = 0;
-    this.player.x = this.w * .22; this.player.y = this.h * .5;
-    this.input.fire = false; this.input.boost = false;
-    this.touch.up = this.touch.down = this.touch.left = this.touch.right = false;
-    this.keys = {};
-    this.applyShip();
-    for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160);
     this.last = performance.now();
-    updateHud();
-  }
-  loop = () => {
-    if (!this.running) return;
-    try {
-      const now = performance.now();
-      let dt = Math.min(.05, (now - this.last) / 1000);
-      this.last = now;
-      if (!this.paused) this.update(dt);
-      this.draw();
-    } catch (err) {
-      console.error('Game loop error:', err.message, err.stack);
-    }
-    this.raf = requestAnimationFrame(this.loop);
-  }
-  update(dt) {
-    if (this.dead) { this.updateParticles(dt); this.updateArcs(dt); return; }
-    const boost = this.input.boost || this.keys[' '] || this.keys.shift;
-    let ix = 0, iy = 0;
-    if (this.keys.a || this.keys.arrowleft || this.touch.left) ix -= 1; if (this.keys.d || this.keys.arrowright || this.touch.right) ix += 1;
-    if (this.keys.w || this.keys.arrowup || this.touch.up) iy -= 1; if (this.keys.s || this.keys.arrowdown || this.touch.down) iy += 1;
-    const speed = this.ship.speed * (boost ? 1.65 : 1);
-    this.player.vx += ix * speed * dt * 4; this.player.vy += iy * speed * dt * 4;
-    this.player.vx *= .86; this.player.vy *= .86;
-    this.player.x = Math.max(46, Math.min(this.w-58, this.player.x + this.player.vx*dt));
-    this.player.y = Math.max(64, Math.min(this.h-64, this.player.y + this.player.vy*dt));
-    this.distance += speed * dt * .08; this.updatePoints(); els.hudDist.textContent = Math.floor(this.distance); els.hudKills.textContent = (currentPilot.kills||0) + this.runKills; els.hudPoints.textContent = this.runPoints;
-    if (this.input.fire || this.keys.z || this.keys.j || this.keys.k) this.fireWeapon();
-    this.spawnTimer -= dt; if (this.spawnTimer <= 0) { this.spawnEnemy(this.w + 80); this.spawnTimer = Math.max(.45, 1.2 - this.distance/1200); }
-    this.updateStars(dt, speed); this.updateGravity(dt); this.updateLasers(dt); this.updateEnemies(dt); this.updateParticles(dt); this.updateArcs(dt);
-    this.saveTimer += dt; if (this.saveTimer > 3) { this.saveTimer = 0; this.saveBest(); }
-  }
-  updatePoints() { this.runPoints = Math.floor(this.distance * 4) + this.runKills * 150 + this.runCredits; }
-  fireWeapon() {
-    const weapon = activeWeapon(); const now = performance.now()/1000;
-    if (now - this.lastFire < weapon.cooldown) return;
-    this.lastFire = now;
-    const count = weapon.beams; const start = -(count-1)/2;
-    for (let i=0;i<count;i++) {
-      const offset = start + i; const angle = offset * weapon.spread;
-      const side = count === 1 ? 0 : offset * 9;
-      const laser = {
-        x:this.player.x+30, y:this.player.y+side,
-        vx: Math.cos(angle)*weapon.speed, vy: Math.sin(angle)*weapon.speed,
-        life: 1.25, color: weapon.color, glow: weapon.glow, width: weapon.width,
-        damage: weapon.damage, pierce: weapon.pierce, splash: weapon.splash || 0,
-        zigzag: !!weapon.zigzag, phase: Math.random()*10, trail: [],
-        homing: !!weapon.homing, turnRate: weapon.turnRate || 0,
-        chain: weapon.chain || 0, chainRange: weapon.chainRange || 0,
-        gravity: !!weapon.gravity, gravityRadius: weapon.gravityRadius || 0, gravityPull: weapon.gravityPull || 0, gravityLife: weapon.gravityLife || 0,
-        scatter: !!weapon.scatter, scatterBounces: weapon.scatter ? 2 : 0,
-        expand: !!weapon.expand, expandRate: weapon.expandRate || 0,
-        startWidth: weapon.width, spawnX: this.player.x+30, spawnY: this.player.y+side
-      };
-      if (laser.scatter) laser.life = .55;
-      if (laser.expand) laser.life = 1.6;
-      this.lasers.push(laser);
-    }
-    for (let p=0;p<8;p++) this.particles.push({x:this.player.x+24,y:this.player.y,vx:Math.random()*-80,vy:(Math.random()-.5)*90,life:.2,color:weapon.glow,size:2});
-  }
-  spawnEnemy(x) { this.enemies.push({ x, y: 80 + Math.random()*(this.h-160), r: 16 + Math.random()*10, hp: 2 + Math.floor(this.distance/400), maxHp: 2 + Math.floor(this.distance/400), speed: 90 + Math.random()*80 + this.distance*.03, phase: Math.random()*8, fire: 1 + Math.random()*2, color: Math.random()>.5 ? '#ff405c' : '#ff9f40' }); }
-  updateStars(dt, speed) { this.stars.forEach(s => { s.x -= speed * dt * s.z; if (s.x < -10) { s.x=this.w+10; s.y=Math.random()*this.h; s.z=.25+Math.random()*1.8; } }); }
-  nearestEnemy(x,y,exclude) {
-    let best=null, bd=Infinity;
-    for (let i=0;i<this.enemies.length;i++) { const e=this.enemies[i]; if (exclude && exclude.includes(i)) continue; const d=Math.hypot(e.x-x,e.y-y); if (d<bd) { bd=d; best={enemy:e,index:i,dist:d}; } }
-    return best;
-  }
-  spawnGravityWell(x,y,life,radius,pull,damage,color,glow) {
-    this.gravityWells.push({ x, y, life, maxLife: life, radius, pull, damage, color, glow, phase: 0, tickTimer: 0 });
-  }
-  updateGravity(dt) {
-    for (let i=this.gravityWells.length-1;i>=0;i--) {
-      const g=this.gravityWells[i]; g.life -= dt; g.phase += dt*4; g.tickTimer += dt;
-      for (let j=this.enemies.length-1;j>=0;j--) {
-        const e=this.enemies[j]; const dx=g.x-e.x, dy=g.y-e.y, d=Math.hypot(dx,dy);
-        if (d < g.radius && d > 4) {
-          const force = g.pull * (1 - d/g.radius) * dt;
-          e.x += (dx/d) * force; e.y += (dy/d) * force;
-        }
+    this.lastFrameSeen = performance.now();
+    for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160);
+    this.loop();
+    clearInterval(this.frameWatch);
+    this.frameWatch = setInterval(() => {
+      if (!this.running || document.hidden || !els.game.classList.contains('active') || anyOverlayOpen() || this.dead) return;
+      if (this.paused || performance.now() - this.lastFrameSeen > 900) {
+        forceResumeGameFromOverlay();
       }
-      if (g.tickTimer >= .15) {
-        g.tickTimer = 0;
-        for (let j=this.enemies.length-1;j>=0;j--) {
-          const e=this.enemies[j]; if (Math.hypot(e.x-g.x, e.y-g.y) < g.radius*.5) {
-            e.hp -= g.damage; this.particles.push({x:e.x,y:e.y,vx:(Math.random()-.5)*40,vy:(Math.random()-.5)*40,life:.3,color:g.glow,size:2});
-            if (e.hp <= 0) this.killEnemy(j);
-          }
-        }
-      }
-      if (Math.random() < .6) {
-        const a = Math.random()*Math.PI*2; const r = g.radius;
-        this.particles.push({x:g.x+Math.cos(a)*r, y:g.y+Math.sin(a)*r, vx:-Math.cos(a)*120, vy:-Math.sin(a)*120, life:.5, color:g.color, size:2});
-      }
-      if (g.life <= 0) {
-        for (let j=this.enemies.length-1;j>=0;j--) {
-          const e=this.enemies[j]; if (Math.hypot(e.x-g.x, e.y-g.y) < g.radius) {
-            e.hp -= g.damage*3; if (e.hp <= 0) this.killEnemy(j);
-          }
-        }
-        this.burst(g.x,g.y,g.glow,40);
-        this.gravityWells.splice(i,1);
-      }
-    }
+    }, 500);
   }
-  updateArcs(dt) { for (let i=this.arcs.length-1;i>=0;i--) { this.arcs[i].life -= dt; if (this.arcs[i].life<=0) this.arcs.splice(i,1); } }
-  chainTesla(startX,startY,damage,color,glow,maxChains,range) {
-    const hit = []; let cx=startX, cy=startY;
-    for (let c=0;c<maxChains;c++) {
-      const target = this.nearestEnemy(cx,cy,hit);
-      if (!target || target.dist > range) break;
-      this.arcs.push({ x1:cx, y1:cy, x2:target.enemy.x, y2:target.enemy.y, life:.18, color, glow });
-      target.enemy.hp -= damage * (1 - c*0.18);
-      this.burst(target.enemy.x, target.enemy.y, glow, 8);
-      if (target.enemy.hp <= 0) this.killEnemy(target.index);
-      hit.push(target.index);
-      cx = target.enemy.x; cy = target.enemy.y;
-    }
-  }
-  updateLasers(dt) {
-    for (let i=this.lasers.length-1;i>=0;i--) {
-      const l=this.lasers[i]; l.phase += dt*18; l.trail.push({x:l.x,y:l.y}); if (l.trail.length>8) l.trail.shift();
-      if (l.homing) {
-        const target = this.nearestEnemy(l.x,l.y);
-        if (target && target.dist < 500) {
-          const desiredAngle = Math.atan2(target.enemy.y-l.y, target.enemy.x-l.x);
-          const currentAngle = Math.atan2(l.vy, l.vx);
-          let diff = desiredAngle - currentAngle;
-          while (diff > Math.PI) diff -= Math.PI*2;
-          while (diff < -Math.PI) diff += Math.PI*2;
-          const turn = Math.max(-l.turnRate*dt, Math.min(l.turnRate*dt, diff));
-          const newAngle = currentAngle + turn;
-          const speed = Math.hypot(l.vx, l.vy);
-          l.vx = Math.cos(newAngle) * speed;
-          l.vy = Math.sin(newAngle) * speed;
-        }
-      }
-      if (l.expand) {
-        const traveled = l.x - l.spawnX;
-        l.width = l.startWidth + traveled * 0.18;
-      }
-      l.x += l.vx*dt; l.y += l.vy*dt + (l.zigzag ? Math.sin(l.phase)*2.6 : 0);
-      if (l.expand) l.y += Math.sin(l.phase*.6) * 1.5;
-      l.life -= dt;
-      let remove = l.life <= 0 || l.x > this.w + 80 || l.y < -80 || l.y > this.h+80;
-      if (l.scatter && (l.y < 60 || l.y > this.h-60)) {
-        if (l.scatterBounces > 0) { l.vy = -l.vy; l.scatterBounces -= 1; this.burst(l.x,l.y,l.glow,4); }
-        else remove = true;
-      }
-      for (let j=this.enemies.length-1;j>=0 && !remove;j--) {
-        const e=this.enemies[j]; if (Math.hypot(e.x-l.x, e.y-l.y) < e.r + l.width) {
-          e.hp -= l.damage; this.burst(l.x,l.y,l.glow, l.splash ? 16 : 6);
-          if (l.splash) this.splashDamage(l.x,l.y,l.splash,l.damage*.7);
-          if (l.chain) {
-            this.chainTesla(e.x, e.y, l.damage*.85, l.color, l.glow, l.chain, l.chainRange);
-          }
-          if (l.gravity) {
-            this.spawnGravityWell(l.x, l.y, l.gravityLife, l.gravityRadius, l.gravityPull, l.damage, l.color, l.glow);
-            remove = true;
-            if (e.hp <= 0) this.killEnemy(j);
-            break;
-          }
-          if (e.hp <= 0) this.killEnemy(j);
-          if (l.pierce > 0) l.pierce -= 1; else remove = true;
-        }
-      }
-      if (l.gravity && l.life <= 0 && !remove) {
-        this.spawnGravityWell(l.x, l.y, l.gravityLife, l.gravityRadius, l.gravityPull, l.damage, l.color, l.glow);
-        remove = true;
-      }
-      if (remove) this.lasers.splice(i,1);
-    }
-    for (let i=this.enemyLasers.length-1;i>=0;i--) {
-      const l=this.enemyLasers[i]; l.x += l.vx*dt; l.y += l.vy*dt; l.life -= dt;
-      if (Math.hypot(l.x-this.player.x, l.y-this.player.y) < 22) { this.takeDamage(10); this.burst(l.x,l.y,'#ffeb80',8); this.enemyLasers.splice(i,1); continue; }
-      if (l.life <= 0 || l.x < -60) this.enemyLasers.splice(i,1);
-    }
-  }
-  splashDamage(x,y,r,dmg) { for (let j=this.enemies.length-1;j>=0;j--) { const e=this.enemies[j]; if (Math.hypot(e.x-x,e.y-y) < r+e.r) { e.hp -= dmg; if (e.hp <= 0) this.killEnemy(j); } } }
-  killEnemy(index) { const e=this.enemies[index]; this.burst(e.x,e.y,'#ff405c',22); this.enemies.splice(index,1); this.runKills++; this.runCredits += 25; this.updatePoints(); els.hudPoints.textContent = this.runPoints; }
-  updateEnemies(dt) {
-    for (let i=this.enemies.length-1;i>=0;i--) {
-      const e=this.enemies[i]; e.phase += dt*2; e.x -= e.speed*dt; e.y += Math.sin(e.phase)*35*dt; e.fire -= dt;
-      if (e.fire <= 0 && e.x > this.w*.35) { e.fire = 1.2 + Math.random()*2; const dx=this.player.x-e.x, dy=this.player.y-e.y, len=Math.hypot(dx,dy)||1; this.enemyLasers.push({x:e.x-12,y:e.y,vx:dx/len*330,vy:dy/len*330,life:2,color:'#ff4040'}); }
-      if (Math.hypot(e.x-this.player.x,e.y-this.player.y) < e.r+22) { this.takeDamage(24); this.burst(e.x,e.y,'#ff4040',18); this.enemies.splice(i,1); continue; }
-      if (e.x < -70) this.enemies.splice(i,1);
-    }
-  }
-  burst(x,y,color,count) { for (let i=0;i<count;i++) { const a=Math.random()*Math.PI*2, sp=40+Math.random()*220; this.particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:.25+Math.random()*.45,color,size:2+Math.random()*4}); } }
-  updateParticles(dt) { for (let i=this.particles.length-1;i>=0;i--) { const p=this.particles[i]; p.x+=p.vx*dt; p.y+=p.vy*dt; p.life-=dt; if (p.life<=0) this.particles.splice(i,1); } }
-  takeDamage(amount) { if (this.dead) return; this.player.hp -= amount; this.updateHp(); if (this.player.hp <= 0) this.die(); }
-  updateHp() { els.hpFill.style.width = Math.max(0, this.player.hp / this.player.maxHp * 100) + '%'; }
-  die() {
-    this.dead = true;
-    this.burst(this.player.x,this.player.y,'#ff3380',42);
-    this.input.fire = false; this.input.boost = false;
-    this.touch.up = this.touch.down = this.touch.left = this.touch.right = false;
-    this.keys = {};
-    setTimeout(() => this.endRun(), 650);
-  }
-  async endRun() {
-    this.updatePoints();
-    const newBest = this.runPoints > (currentPilot.best_score||0);
-    const patch = {
-      credits: (currentPilot.credits||0) + this.runCredits,
-      kills: (currentPilot.kills||0) + this.runKills,
-      runs_completed: (currentPilot.runs_completed||0) + 1
-    };
-    if (this.distance > (currentPilot.best_distance||0)) patch.best_distance = this.distance;
-    if (newBest) patch.best_score = this.runPoints;
-    await savePilotPartial(patch);
-    updateHud();
-    if (newBest) showToast('NEW HIGH POINTS');
-    els.goPoints.textContent = this.runPoints;
-    els.goDist.textContent = Math.floor(this.distance);
-    els.goKills.textContent = this.runKills;
-    els.goCredits.textContent = '+' + this.runCredits;
-    els.goBest.textContent = Math.floor(currentPilot.best_distance||0);
-    els.goBestScore.textContent = Math.floor(currentPilot.best_score||0);
-    pauseGameForOverlay();
-    els.gameOver.classList.add('active');
-  }
-  async saveBest() {
-    const patch = {};
-    if (this.distance > (currentPilot.best_distance||0)) { currentPilot.best_distance = this.distance; patch.best_distance = this.distance; }
-    if (this.runPoints > (currentPilot.best_score||0)) { currentPilot.best_score = this.runPoints; patch.best_score = this.runPoints; }
-    if (!Object.keys(patch).length) return;
-    try { await supabase.from(PILOTS_TABLE).update(patch).eq('id', currentPilot.id); } catch(e) { console.error('Best save error:', e.message); }
-  }
-  draw() {
-    const ctx=this.ctx; ctx.clearRect(0,0,this.w,this.h);
-    const g=ctx.createLinearGradient(0,0,this.w,this.h); g.addColorStop(0,'#090521'); g.addColorStop(.48,'#110835'); g.addColorStop(1,'#04010b'); ctx.fillStyle=g; ctx.fillRect(0,0,this.w,this.h);
-    ctx.save(); this.stars.forEach(s => { ctx.globalAlpha=Math.min(1,s.z*.8); ctx.fillStyle=s.color; ctx.fillRect(s.x,s.y,Math.max(1,s.z*2),Math.max(1,s.z*2)); }); ctx.restore();
-    ctx.strokeStyle='rgba(255,51,128,.18)'; ctx.lineWidth=1; const offset=(this.distance*18)%48; for(let x=-offset;x<this.w;x+=48){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x+this.w*.25,this.h);ctx.stroke();}
-    this.drawGravityWells(); this.drawShip(); this.enemies.forEach(e=>this.drawEnemy(e)); this.drawLasers(); this.drawArcs(); this.drawParticles(); this.drawPointPopups();
-    if (this.dead) { ctx.fillStyle='rgba(0,0,0,.25)'; ctx.fillRect(0,0,this.w,this.h); }
-  }
-  drawShip() { const ctx=this.ctx, p=this.player; ctx.save(); ctx.translate(p.x,p.y); ctx.shadowBlur=20; ctx.shadowColor=this.ship.color; ctx.fillStyle=this.ship.color; ctx.beginPath(); ctx.moveTo(30,0); ctx.lineTo(-20,-18); ctx.lineTo(-9,0); ctx.lineTo(-20,18); ctx.closePath(); ctx.fill(); ctx.strokeStyle=this.ship.accent; ctx.lineWidth=2; ctx.stroke(); ctx.fillStyle=this.ship.accent; ctx.fillRect(-18,-4,18,8); ctx.restore(); }
-  drawEnemy(e) { const ctx=this.ctx; ctx.save(); ctx.translate(e.x,e.y); ctx.rotate(e.phase*.8); ctx.shadowBlur=16; ctx.shadowColor=e.color; ctx.strokeStyle=e.color; ctx.fillStyle='rgba(255,64,80,.18)'; ctx.lineWidth=2; ctx.beginPath(); for(let i=0;i<6;i++){ const a=i*Math.PI/3; const r=i%2?e.r*.65:e.r; const x=Math.cos(a)*r, y=Math.sin(a)*r; if(i===0)ctx.moveTo(x,y); else ctx.lineTo(x,y); } ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore(); ctx.fillStyle='#ffeb80'; ctx.fillRect(e.x-e.r, e.y-e.r-9, (e.hp/e.maxHp)*e.r*2, 3); }
-  drawGravityWells() {
-    const ctx=this.ctx;
-    this.gravityWells.forEach(g => {
-      ctx.save();
-      const r = g.radius;
-      const grad = ctx.createRadialGradient(g.x,g.y,0,g.x,g.y,r);
-      grad.addColorStop(0,'rgba(0,0,0,.95)');
-      grad.addColorStop(.55, g.color);
-      grad.addColorStop(1,'rgba(0,0,0,0)');
-      ctx.globalAlpha = .85;
-      ctx.fillStyle = grad;
-      ctx.beginPath(); ctx.arc(g.x,g.y,r,0,Math.PI*2); ctx.fill();
-      ctx.globalAlpha = 1;
-      ctx.shadowBlur = 30; ctx.shadowColor = g.glow;
-      ctx.fillStyle = '#000';
-      ctx.beginPath(); ctx.arc(g.x,g.y,18+Math.sin(g.phase)*3,0,Math.PI*2); ctx.fill();
-      ctx.strokeStyle = g.glow; ctx.lineWidth = 1.5;
-      for (let k=0;k<3;k++) {
-        ctx.globalAlpha = .35;
-        ctx.beginPath();
-        ctx.arc(g.x,g.y, 30 + k*22 + Math.sin(g.phase+k)*4, g.phase + k, g.phase + k + Math.PI*1.3);
-        ctx.stroke();
-      }
-      ctx.restore();
-    });
-  }
-  drawArcs() {
-    const ctx=this.ctx;
-    this.arcs.forEach(a => {
-      ctx.save();
-      ctx.shadowBlur = 18; ctx.shadowColor = a.glow;
-      ctx.strokeStyle = a.color; ctx.lineWidth = 3; ctx.lineCap='round';
-      ctx.beginPath();
-      const steps = 8;
-      ctx.moveTo(a.x1, a.y1);
-      for (let s=1;s<steps;s++) {
-        const t = s/steps;
-        const x = a.x1 + (a.x2-a.x1)*t + (Math.random()-.5)*16;
-        const y = a.y1 + (a.y2-a.y1)*t + (Math.random()-.5)*16;
-        ctx.lineTo(x,y);
-      }
-      ctx.lineTo(a.x2, a.y2);
-      ctx.stroke();
-      ctx.restore();
-    });
-  }
-  drawLasers() {
-    const ctx=this.ctx; ctx.lineCap='round';
-    this.lasers.forEach(l=>{
-      ctx.save(); ctx.shadowBlur=20; ctx.shadowColor=l.glow;
-      l.trail.forEach((t,i)=>{ if(i===0)return; const a=i/l.trail.length; ctx.strokeStyle=l.color; ctx.globalAlpha=a*.45; ctx.lineWidth=l.width*a; ctx.beginPath(); ctx.moveTo(l.trail[i-1].x,l.trail[i-1].y); ctx.lineTo(t.x,t.y); ctx.stroke(); });
-      ctx.globalAlpha=1; ctx.strokeStyle=l.color; ctx.lineWidth=l.width;
-      if (l.homing) {
-        const ang = Math.atan2(l.vy, l.vx);
-        ctx.translate(l.x, l.y); ctx.rotate(ang);
-        ctx.fillStyle = l.color;
-        ctx.beginPath();
-        ctx.moveTo(10,0); ctx.lineTo(-6,-4); ctx.lineTo(-3,0); ctx.lineTo(-6,4); ctx.closePath();
-        ctx.fill();
-        ctx.strokeStyle = l.glow; ctx.lineWidth = 1.5; ctx.stroke();
-      } else if (l.expand) {
-        ctx.beginPath();
-        ctx.moveTo(l.x-2, l.y - l.width); ctx.lineTo(l.x-2, l.y + l.width);
-        ctx.lineWidth = 6; ctx.stroke();
-        ctx.lineWidth = 2; ctx.globalAlpha = .6;
-        ctx.beginPath(); ctx.moveTo(l.x-l.width*.6, l.y - l.width*1.1); ctx.lineTo(l.x-l.width*.6, l.y + l.width*1.1); ctx.stroke();
-        ctx.globalAlpha = 1;
-      } else {
-        ctx.beginPath(); ctx.moveTo(l.x-l.width*3,l.y); ctx.lineTo(l.x+l.width*3,l.y); ctx.stroke();
-        if(l.splash || l.gravity){ctx.fillStyle=l.color;ctx.beginPath();ctx.arc(l.x,l.y,l.width*.9,0,Math.PI*2);ctx.fill();}
-      }
-      ctx.restore();
-    });
-    this.enemyLasers.forEach(l=>{ ctx.save(); ctx.shadowBlur=12; ctx.shadowColor='#ff4040'; ctx.strokeStyle='#ff4040'; ctx.lineWidth=5; ctx.beginPath(); ctx.moveTo(l.x+10,l.y); ctx.lineTo(l.x-10,l.y); ctx.stroke(); ctx.restore(); });
-  }
-  drawParticles() { const ctx=this.ctx; this.particles.forEach(p=>{ ctx.globalAlpha=Math.max(0,p.life*2); ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fill(); }); ctx.globalAlpha=1; }
-  drawPointPopups() { const ctx=this.ctx; ctx.save(); ctx.font='18px VT323, monospace'; ctx.textAlign='center'; ctx.fillStyle='#ffeb80'; this.particles.filter(p=>p.points).forEach(p=>ctx.fillText(p.points, p.x, p.y)); ctx.restore(); }
-}
+  stop() {
+    this.running = false;
+    clearInterval(this.frameWatch);
+    cancelAnimationFrame(this.raf);
+  }`
+    );
 
-async function completeSignIn(user, statusText = 'LOADING PILOT...') {
-  if (!user) throw new Error('No signed-in user returned');
-  if (authTransitioning && activeSessionUserId === user.id) return;
-  authTransitioning = true;
-  activeSessionUserId = user.id;
-  els.loading.classList.add('hidden');
-  els.authMsg.className = 'auth-msg success';
-  els.authMsg.textContent = statusText;
-  try {
-    currentUser = user;
-    await loadPilot();
-    await showGame();
-    els.authMsg.textContent = '';
-    els.authMsg.className = 'auth-msg';
+    html = html.replace(
+      `const now = performance.now();
+      let dt = Math.min(.05, (now - this.last) / 1000);`,
+      `const now = performance.now();
+      this.lastFrameSeen = now;
+      let dt = Math.min(.05, (now - this.last) / 1000);`
+    );
+
+    html = html.replace(
+      `} else { this.last = performance.now(); }
+    });`,
+      `} else {
+        this.last = performance.now();
+        if (this.running && !this.dead && !anyOverlayOpen()) forceResumeGameFromOverlay();
+      }
+    });`
+    );
+
+    document.open();
+    document.write(html);
+    document.close();
   } catch (err) {
-    console.error('Sign-in transition error:', err.message, err.stack);
-    showAuth();
-    els.authMsg.className = 'auth-msg error';
-    els.authMsg.textContent = (err.message || 'LOGIN FAILED').toUpperCase();
-    throw err;
-  } finally {
-    authTransitioning = false;
-    els.authSubmit.disabled = false;
+    document.body.innerHTML = '<div class="msg">LOAD FAILED<br><small>' + String(err.message || err).replace(/[<>&]/g, '') + '</small></div>';
   }
-}
-
-async function showGame() {
-  els.auth.style.display = 'none'; els.game.classList.add('active'); updateHud();
-  if (!game) { game = new ShaderPilotGame(els.canvas); game.start(); } else game.respawn();
-}
-function showAuth() { els.game.classList.remove('active'); els.auth.style.display = 'flex'; }
-
-supabase.auth.onAuthStateChange((event, session) => {
-  els.loading.classList.add('hidden');
-  if (event === 'SIGNED_OUT' || !session?.user) {
-    if (authTransitioning && session?.user) return;
-    currentUser = null;
-    currentPilot = null;
-    activeSessionUserId = null;
-    showAuth();
-    return;
-  }
-  if (event === 'SIGNED_IN' && activeSessionUserId !== session.user.id) {
-    setTimeout(() => {
-      completeSignIn(session.user, 'LOADING PILOT...').catch((err) => console.error('Auth state sign-in error:', err.message));
-    }, 0);
-  }
-});
-
-(async function boot() {
-  try {
-    const { data: { session } } = await supabase.auth.getSession();
-    els.loading.classList.add('hidden');
-    if (session?.user) await completeSignIn(session.user, 'RESTORING SESSION...');
-    else showAuth();
-  } catch (err) { console.error('Boot error:', err.message); els.loading.classList.add('hidden'); showAuth(); }
 })();
 </script>
 </body>
