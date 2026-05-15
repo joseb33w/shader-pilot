@@ -233,6 +233,315 @@ function resumeGameAfterOverlay() {
     });
   }`, 'non-blocking death summary');
 
+
+    replaceExact(`  .weapon-readout strong { color: #ffeb80; }`, `  .weapon-readout strong { color: #ffeb80; }
+  .weapon-quick { position: absolute; left: 50%; bottom: 74px; transform: translateX(-50%); z-index: 12; display: grid; grid-template-columns: 42px minmax(190px, 300px) 42px; gap: 7px; align-items: center; pointer-events: auto; }
+  .weapon-cycle-btn { height: 38px; border: 1px solid rgba(255,235,128,.65); background: rgba(5,1,15,.76); color: #ffeb80; box-shadow: 0 0 12px rgba(255,235,128,.18); font-family: 'Press Start 2P', monospace; font-size: .6rem; }
+  .weapon-cycle-panel { min-height: 38px; padding: 8px 10px; background: rgba(5,1,15,.76); border: 1px solid rgba(128,192,255,.48); color: #80c0ff; text-align: center; font-family: 'Press Start 2P', monospace; font-size: .48rem; line-height: 1.45; letter-spacing: 1px; box-shadow: inset 0 0 14px rgba(96,32,192,.24); }
+  .weapon-cycle-panel strong { color: #ffeb80; }
+  .weapon-cycle-panel small { display:block; margin-top:2px; color:#91b7eb; font-family:'VT323', monospace; font-size:.95rem; letter-spacing:1px; }`, 'quick weapon switcher css');
+
+    replaceExact(`    .weapon-readout { bottom: 176px; min-width: 245px; font-size: .5rem; }`, `    .weapon-readout { bottom: 176px; min-width: 245px; font-size: .5rem; }
+    .weapon-quick { bottom: 226px; grid-template-columns: 38px minmax(170px, 250px) 38px; gap:5px; }
+    .weapon-cycle-btn { height: 34px; font-size: .52rem; }
+    .weapon-cycle-panel { min-height:34px; padding:6px 8px; font-size:.42rem; }`, 'quick weapon switcher mobile css');
+
+    replaceExact(`    <div class="weapon-readout" id="weaponReadout">WEAPON: <strong>PULSE LASER</strong></div>`, `    <div class="weapon-quick" id="weaponQuick">
+      <button class="weapon-cycle-btn" id="prevWeaponBtn" type="button" title="Previous weapon">◀</button>
+      <div class="weapon-cycle-panel" id="weaponQuickPanel">WEAPON <strong>PULSE LASER</strong><small>tap arrows or press 1-0</small></div>
+      <button class="weapon-cycle-btn" id="nextWeaponBtn" type="button" title="Next weapon">▶</button>
+    </div>
+    <div class="weapon-readout" id="weaponReadout">WEAPON: <strong>PULSE LASER</strong></div>`, 'quick weapon switcher markup');
+
+    replaceExact(`function activeWeapon() { return WEAPONS[weaponState().active] || WEAPONS.pulse; }`, `function activeWeapon() { return WEAPONS[weaponState().active] || WEAPONS.pulse; }
+
+function pilotStorageKey() {
+  return 'shader-pilot:persistent-pilot:' + (currentUser?.id || currentPilot?.email || 'guest');
+}
+function persistPilotLocal() {
+  if (!currentPilot) return;
+  try {
+    localStorage.setItem(pilotStorageKey(), JSON.stringify({
+      credits: currentPilot.credits,
+      kills: currentPilot.kills,
+      best_score: currentPilot.best_score,
+      best_distance: currentPilot.best_distance,
+      runs_completed: currentPilot.runs_completed,
+      active_ship: currentPilot.active_ship,
+      owned_ships: currentPilot.owned_ships || ['striker'],
+      upgrades: currentPilot.upgrades || { weapons: defaultWeapons() },
+      saved_at: Date.now()
+    }));
+  } catch (err) {
+    console.warn('Local pilot save failed:', err.message || err);
+  }
+}
+function mergePilotLocal() {
+  if (!currentPilot) return;
+  try {
+    const raw = localStorage.getItem(pilotStorageKey());
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    if (!saved || typeof saved !== 'object') return;
+    if (typeof saved.credits === 'number') currentPilot.credits = saved.credits;
+    if (typeof saved.kills === 'number') currentPilot.kills = Math.max(currentPilot.kills || 0, saved.kills);
+    if (typeof saved.best_score === 'number') currentPilot.best_score = Math.max(currentPilot.best_score || 0, saved.best_score);
+    if (typeof saved.best_distance === 'number') currentPilot.best_distance = Math.max(currentPilot.best_distance || 0, saved.best_distance);
+    if (typeof saved.runs_completed === 'number') currentPilot.runs_completed = Math.max(currentPilot.runs_completed || 0, saved.runs_completed);
+    if (Array.isArray(saved.owned_ships)) currentPilot.owned_ships = Array.from(new Set([...(currentPilot.owned_ships || ['striker']), ...saved.owned_ships]));
+    if (saved.active_ship && SHIPS[saved.active_ship]) currentPilot.active_ship = saved.active_ship;
+    if (saved.upgrades?.weapons) {
+      const dbWeapons = weaponState();
+      const savedWeapons = saved.upgrades.weapons;
+      currentPilot.upgrades = currentPilot.upgrades || {};
+      currentPilot.upgrades.weapons = {
+        owned: Array.from(new Set(['pulse', ...(dbWeapons.owned || []), ...(savedWeapons.owned || [])])).filter(k => WEAPONS[k]),
+        active: WEAPONS[savedWeapons.active] ? savedWeapons.active : dbWeapons.active,
+        levels: { ...(dbWeapons.levels || {}), ...(savedWeapons.levels || {}) }
+      };
+    }
+  } catch (err) {
+    console.warn('Local pilot merge failed:', err.message || err);
+  }
+}
+function ownedWeaponKeys() {
+  const ws = weaponState();
+  return (ws.owned || ['pulse']).filter(k => WEAPONS[k]);
+}
+async function equipWeaponKey(key, opts = {}) {
+  if (!currentPilot || !WEAPONS[key]) return { ok:false };
+  const weapon = WEAPONS[key];
+  const currentWS = weaponState();
+  const owned = currentWS.owned.includes(key);
+  const price = opts.price ?? weapon.price ?? 0;
+  if (opts.buy && !owned && (currentPilot.credits || 0) < price) {
+    showToast('NEED CREDITS');
+    return { ok:false };
+  }
+  const nextUpgrades = JSON.parse(JSON.stringify(currentPilot.upgrades || {}));
+  nextUpgrades.weapons = {
+    owned: Array.from(new Set(['pulse', ...(currentWS.owned || []), key])).filter(k => WEAPONS[k]),
+    active: key,
+    levels: currentWS.levels || {}
+  };
+  const patch = { upgrades: nextUpgrades };
+  if (opts.buy && !owned) patch.credits = Math.max(0, (currentPilot.credits || 0) - price);
+  const result = await savePilotPartial(patch);
+  updateHud();
+  if (game) game.lastFire = 0;
+  if (opts.toast !== false && result.ok) showToast(opts.buy && !owned ? weapon.name + ' PURCHASED' : weapon.name + ' EQUIPPED');
+  return result;
+}
+function cycleWeapon(dir) {
+  const keys = ownedWeaponKeys();
+  if (!keys.length) return;
+  const active = weaponState().active;
+  const idx = Math.max(0, keys.indexOf(active));
+  const next = keys[(idx + dir + keys.length) % keys.length];
+  if (next && next !== active) equipWeaponKey(next);
+}
+function renderQuickWeapons() {
+  const panel = document.getElementById('weaponQuickPanel');
+  if (!panel || !currentPilot) return;
+  const keys = ownedWeaponKeys();
+  const weapon = activeWeapon();
+  const pos = Math.max(1, keys.indexOf(weaponState().active) + 1);
+  panel.innerHTML = 'WEAPON <strong>' + weapon.name + '</strong><small>' + pos + '/' + keys.length + ' owned · arrows or 1-0 to swap</small>';
+}`, 'local weapon persistence and quick switch helpers');
+
+    replaceExact(`function updateHud() {
+  const ship = SHIPS[currentPilot?.active_ship || 'striker'] || SHIPS.striker;
+  const weapon = activeWeapon();
+  els.hudCallsign.textContent = (currentPilot?.callsign || 'PILOT').toUpperCase();
+  els.hudShip.textContent = ship.name;
+  els.hudPoints.textContent = game && !game.dead ? game.runPoints || 0 : currentPilot?.best_score || 0;
+  els.hudCredits.textContent = currentPilot?.credits || 0;
+  els.hudKills.textContent = currentPilot?.kills || 0;
+  els.weaponReadout.innerHTML = \`WEAPON: <strong>\${weapon.name}</strong> <span style="color:\${weapon.color}">◆</span>\`;
+}`, `function updateHud() {
+  const ship = SHIPS[currentPilot?.active_ship || 'striker'] || SHIPS.striker;
+  const weapon = activeWeapon();
+  els.hudCallsign.textContent = (currentPilot?.callsign || 'PILOT').toUpperCase();
+  els.hudShip.textContent = ship.name;
+  els.hudPoints.textContent = game && !game.dead ? game.runPoints || 0 : currentPilot?.best_score || 0;
+  els.hudCredits.textContent = currentPilot?.credits || 0;
+  els.hudKills.textContent = currentPilot?.kills || 0;
+  els.weaponReadout.innerHTML = \`WEAPON: <strong>\${weapon.name}</strong> <span style="color:\${weapon.color}">◆</span>\`;
+  renderQuickWeapons();
+}`, 'hud refreshes quick weapon switcher');
+
+    replaceExact(`// Save with automatic retry on Supabase schema-cache hiccups (PGRST204 / "Could not find column")
+async function savePilotPartial(patch) {
+  if (!currentPilot) return { ok: false, error: 'no pilot' };
+  // Snapshot previous values so we can roll back if the write fails
+  const previous = {};
+  for (const k of Object.keys(patch)) previous[k] = currentPilot[k];
+  // Apply locally immediately so UI/game pick it up
+  Object.assign(currentPilot, patch);
+  if (!currentPilot.id) return { ok: true, local: true };
+
+  const tryOnce = async () => {
+    const { data, error } = await withTimeout(
+      supabase.from(PILOTS_TABLE).update(patch).eq('id', currentPilot.id).select().single(),
+      8000, 'Pilot save'
+    );
+    if (error) throw error;
+    return data;
+  };
+
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const data = await tryOnce();
+      if (data) Object.assign(currentPilot, data);
+      return { ok: true };
+    } catch (err) {
+      lastErr = err;
+      const msg = (err && (err.message || err.toString())) || '';
+      // PGRST204 = schema cache hasn't refreshed yet after a column add. Wait and retry.
+      const isSchemaCache = /schema cache|PGRST204|Could not find the/i.test(msg);
+      if (!isSchemaCache) break;
+      await new Promise(r => setTimeout(r, 1200 * (attempt + 1)));
+    }
+  }
+  // Roll back local state
+  for (const k of Object.keys(previous)) currentPilot[k] = previous[k];
+  console.error('Pilot save error:', lastErr?.message || lastErr);
+  showToast('SAVE FAILED');
+  return { ok: false, error: lastErr?.message || String(lastErr) };
+}`, `// Local-first save: weapon purchases/equips must never freeze or vanish because
+// a mobile network request or Supabase schema cache is slow. We update the pilot
+// instantly, mirror it to localStorage, then sync Supabase in the background.
+async function savePilotPartial(patch) {
+  if (!currentPilot) return { ok: false, error: 'no pilot' };
+  Object.assign(currentPilot, patch);
+  persistPilotLocal();
+  updateHud();
+
+  if (!currentPilot.id) return { ok: true, local: true };
+
+  (async () => {
+    const tryOnce = async () => {
+      const { data, error } = await withTimeout(
+        supabase.from(PILOTS_TABLE).update(patch).eq('id', currentPilot.id).select().single(),
+        6000, 'Pilot save'
+      );
+      if (error) throw error;
+      return data;
+    };
+
+    let lastErr = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const data = await tryOnce();
+        if (data) {
+          Object.assign(currentPilot, data);
+          mergePilotLocal();
+          persistPilotLocal();
+          updateHud();
+        }
+        return;
+      } catch (err) {
+        lastErr = err;
+        const msg = (err && (err.message || err.toString())) || '';
+        const retryable = /schema cache|PGRST204|Could not find the|timed out|network|fetch/i.test(msg);
+        if (!retryable) break;
+        await new Promise(r => setTimeout(r, 700 * (attempt + 1)));
+      }
+    }
+    console.error('Pilot background save error:', lastErr?.message || lastErr);
+    showToast('SAVED LOCALLY');
+  })();
+
+  return { ok: true, local: true };
+}`, 'local-first nonblocking pilot saves');
+
+    replaceExact(`    if (currentPilot.best_score == null) currentPilot.best_score = 0;
+    weaponState();`, `    if (currentPilot.best_score == null) currentPilot.best_score = 0;
+    mergePilotLocal();
+    weaponState();
+    persistPilotLocal();`, 'merge local purchases on pilot load');
+
+    replaceExact(`  els.weaponsContent.querySelectorAll('[data-buy]').forEach(btn => btn.addEventListener('click', async () => {
+    const key = btn.dataset.buy; const weapon = WEAPONS[key];
+    if (!weapon || currentPilot.credits < weapon.price) return;
+    btn.disabled = true; btn.textContent = 'BUYING...';
+    const currentWS = weaponState();
+    const nextUpgrades = JSON.parse(JSON.stringify(currentPilot.upgrades || {}));
+    nextUpgrades.weapons = {
+      owned: Array.from(new Set([...(currentWS.owned || []), key])),
+      active: key,
+      levels: currentWS.levels || {}
+    };
+    const result = await savePilotPartial({
+      credits: currentPilot.credits - weapon.price,
+      upgrades: nextUpgrades
+    });
+    if (result.ok) showToast(\`\${weapon.name} PURCHASED\`);
+    // savePilotPartial already rolled back local state on failure and toasted
+    updateHud(); renderWeapons();
+  }));`, `  els.weaponsContent.querySelectorAll('[data-buy]').forEach(btn => btn.addEventListener('click', async () => {
+    const key = btn.dataset.buy; const weapon = WEAPONS[key];
+    if (!weapon || currentPilot.credits < weapon.price) return;
+    btn.disabled = true; btn.textContent = 'BUYING...';
+    await equipWeaponKey(key, { buy: true, price: weapon.price, toast: true });
+    renderWeapons();
+    if (game && !game.dead) forceResumeGameFromOverlay();
+  }));`, 'weapon buy uses reliable local-first equip');
+
+    replaceExact(`  els.weaponsContent.querySelectorAll('[data-select]').forEach(btn => btn.addEventListener('click', async () => {
+    const key = btn.dataset.select;
+    const currentWS = weaponState();
+    const nextUpgrades = JSON.parse(JSON.stringify(currentPilot.upgrades || {}));
+    nextUpgrades.weapons = {
+      owned: currentWS.owned,
+      active: key,
+      levels: currentWS.levels || {}
+    };
+    const result = await savePilotPartial({ upgrades: nextUpgrades });
+    if (result.ok) showToast(\`\${WEAPONS[key].name} EQUIPPED\`);
+    updateHud(); renderWeapons();
+  }));`, `  els.weaponsContent.querySelectorAll('[data-select]').forEach(btn => btn.addEventListener('click', async () => {
+    const key = btn.dataset.select;
+    await equipWeaponKey(key, { toast: true });
+    renderWeapons();
+    if (game && !game.dead) forceResumeGameFromOverlay();
+  }));`, 'weapon equip uses shared quick equip flow');
+
+    replaceExact(`els.signout.addEventListener('click', async () => { if (game) game.stop(); game = null; await supabase.auth.signOut(); });
+
+// Pause button + pause menu`, `els.signout.addEventListener('click', async () => { if (game) game.stop(); game = null; await supabase.auth.signOut(); });
+
+document.getElementById('prevWeaponBtn')?.addEventListener('click', (e) => { e.preventDefault(); cycleWeapon(-1); });
+document.getElementById('nextWeaponBtn')?.addEventListener('click', (e) => { e.preventDefault(); cycleWeapon(1); });
+window.addEventListener('keydown', (e) => {
+  if (!els.game.classList.contains('active')) return;
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+  if (anyOverlayOpen()) return;
+  if (e.key === '[' || e.key === 'q' || e.key === 'Q') { cycleWeapon(-1); e.preventDefault(); return; }
+  if (e.key === ']' || e.key === 'e' || e.key === 'E') { cycleWeapon(1); e.preventDefault(); return; }
+  const n = Number(e.key);
+  if (Number.isInteger(n) && n >= 0 && n <= 9) {
+    const keys = ownedWeaponKeys();
+    const idx = n === 0 ? 9 : n - 1;
+    if (keys[idx]) { equipWeaponKey(keys[idx]); e.preventDefault(); }
+  }
+}, { passive: false });
+
+// Pause button + pause menu`, 'quick weapon switcher controls');
+
+    replaceExact(`function openWeapons() { pauseGameForOverlay(); renderWeapons(); els.weaponsMenu.classList.add('active'); }`, `function openWeapons() { pauseGameForOverlay(); renderWeapons(); els.weaponsMenu.classList.add('active'); }
+function closeWeaponsAndResume() {
+  els.weaponsMenu.classList.remove('active');
+  if (game && game.dead) {
+    els.gameOver.classList.remove('active');
+    game.respawn();
+  } else {
+    resumeGameAfterOverlay();
+  }
+}`, 'weapon close helper');
+
+
     document.open();
     document.write(html);
     document.close();
