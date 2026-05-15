@@ -1,0 +1,124 @@
+name: Fix section exit freeze
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch overlay resume safeguards
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('index.html')
+          text = p.read_text()
+
+          old_resume = """function resumeGameAfterOverlay() {
+  if (!game) return;
+  if (anyOverlayOpen()) return;
+  clearGameInputs();
+  // Reset timing so we don't get a giant dt jump after being paused
+  game.last = performance.now();
+  game.paused = false;
+  els.pauseBtn.classList.remove('active');
+}"""
+          new_resume = """let overlayResumeTimer = null;
+function forceResumeGameFromOverlay() {
+  if (!game || anyOverlayOpen()) return;
+  clearGameInputs();
+  // Reset timing so we don't get a giant dt jump after a menu/section closes.
+  game.last = performance.now();
+  game.paused = false;
+  els.pauseBtn.classList.remove('active');
+  // In some mobile WebViews RAF can stall after closing fixed overlays.
+  // Cancel the pending frame and queue a clean one so the run always resumes.
+  if (game.running && !game.dead) {
+    try { cancelAnimationFrame(game.raf); } catch (_) {}
+    game.raf = requestAnimationFrame(game.loop);
+  }
+}
+function resumeGameAfterOverlay() {
+  if (!game) return;
+  if (overlayResumeTimer) clearTimeout(overlayResumeTimer);
+  const resume = () => {
+    if (anyOverlayOpen()) return;
+    forceResumeGameFromOverlay();
+  };
+  requestAnimationFrame(resume);
+  // Fallback for Safari/iOS cases where the first frame after an overlay close is dropped.
+  overlayResumeTimer = setTimeout(resume, 140);
+}"""
+          if old_resume not in text:
+            raise SystemExit('resumeGameAfterOverlay block not found')
+          text = text.replace(old_resume, new_resume)
+
+          old_ctor = """this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.dead = false; this.running = false; this.paused = false;"""
+          new_ctor = """this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.dead = false; this.running = false; this.paused = false; this.frameWatch = null; this.lastFrameSeen = performance.now();"""
+          if old_ctor not in text:
+            raise SystemExit('constructor state line not found')
+          text = text.replace(old_ctor, new_ctor)
+
+          old_start_stop = """start() { this.running = true; this.paused = false; this.last = performance.now(); for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160); this.loop(); }
+  stop() { this.running = false; cancelAnimationFrame(this.raf); }"""
+          new_start_stop = """start() {
+    this.running = true;
+    this.paused = false;
+    this.last = performance.now();
+    this.lastFrameSeen = performance.now();
+    for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160);
+    this.loop();
+    clearInterval(this.frameWatch);
+    this.frameWatch = setInterval(() => {
+      if (!this.running || document.hidden || !els.game.classList.contains('active') || anyOverlayOpen() || this.dead) return;
+      if (this.paused || performance.now() - this.lastFrameSeen > 900) {
+        forceResumeGameFromOverlay();
+      }
+    }, 500);
+  }
+  stop() {
+    this.running = false;
+    clearInterval(this.frameWatch);
+    cancelAnimationFrame(this.raf);
+  }"""
+          if old_start_stop not in text:
+            raise SystemExit('start/stop block not found')
+          text = text.replace(old_start_stop, new_start_stop)
+
+          old_loop = """const now = performance.now();
+      let dt = Math.min(.05, (now - this.last) / 1000);"""
+          new_loop = """const now = performance.now();
+      this.lastFrameSeen = now;
+      let dt = Math.min(.05, (now - this.last) / 1000);"""
+          if old_loop not in text:
+            raise SystemExit('loop timing block not found')
+          text = text.replace(old_loop, new_loop, 1)
+
+          old_visibility = """} else { this.last = performance.now(); }
+    });"""
+          new_visibility = """} else {
+        this.last = performance.now();
+        if (this.running && !this.dead && !anyOverlayOpen()) forceResumeGameFromOverlay();
+      }
+    });"""
+          if old_visibility not in text:
+            raise SystemExit('visibility restore block not found')
+          text = text.replace(old_visibility, new_visibility, 1)
+
+          p.write_text(text)
+          PY
+      - name: Commit patched app
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "No changes to commit"
+          else
+            git add index.html
+            git commit -m "Fix freeze after exiting app sections"
+            git push
+          fi
