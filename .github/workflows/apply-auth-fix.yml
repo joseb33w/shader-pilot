@@ -1,6 +1,10 @@
 name: Apply Auth Fix
 
 "on":
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-auth-fix.yml'
   workflow_dispatch:
 
 permissions:
