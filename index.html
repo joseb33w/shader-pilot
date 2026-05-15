@@ -63,7 +63,7 @@ function resumeGameAfterOverlay() {
   setTimeout(resume, 220);
 }`, 'robust overlay resume');
 
-    replaceExact(`this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.dead = false; this.running = false; this.paused = false;`, `this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.dead = false; this.running = false; this.paused = false; this.frameWatch = null; this.lastFrameSeen = performance.now(); this.loopFaults = 0;`, 'game constructor watchdog state');
+    replaceExact(`this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.dead = false; this.running = false; this.paused = false;`, `this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.dead = false; this.running = false; this.paused = false; this.frameWatch = null; this.lastFrameSeen = performance.now(); this.loopFaults = 0; this.pickups = []; this.pickupTimer = 6; this.shieldTime = 0; this.hitFlash = 0; this.invulnTime = 0;`, 'game constructor watchdog state');
 
     replaceExact(`start() { this.running = true; this.paused = false; this.last = performance.now(); for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160); this.loop(); }
   stop() { this.running = false; cancelAnimationFrame(this.raf); }`, `start() {
@@ -166,11 +166,20 @@ function resumeGameAfterOverlay() {
     els.gameOver.classList.remove('active');
     this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0;
     this.lasers = []; this.enemyLasers = []; this.enemies = []; this.particles = []; this.gravityWells = []; this.arcs = [];
+    this.pickups = []; this.pickupTimer = 6; this.shieldTime = 0; this.hitFlash = 0; this.invulnTime = 1.5;
     this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.loopFaults = 0;
     this.player.vx = 0; this.player.vy = 0;
     this.player.x = this.w * .22; this.player.y = this.h * .5;
+    // CRITICAL: force full HP on respawn. Previously player.hp could be 0 or negative
+    // after death, and applyShip kept that value (negative numbers are truthy with ||),
+    // causing the next hit to kill the player instantly.
+    const shipDef = SHIPS[currentPilot.active_ship] || SHIPS.striker;
+    this.player.hp = shipDef.hp;
+    this.player.maxHp = shipDef.hp;
     clearGameInputs();
     this.applyShip();
+    this.player.hp = this.player.maxHp;
+    this.updateHp();
     for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160);
     this.last = performance.now();
     this.lastFrameSeen = performance.now();
@@ -540,6 +549,176 @@ function closeWeaponsAndResume() {
     resumeGameAfterOverlay();
   }
 }`, 'weapon close helper');
+
+    // ================== HEALTH POWER-UPS + 1-HIT-DEATH FIX ==================
+
+    // Fix applyShip: never let player.hp stay 0/negative after death. Always clamp to [1, maxHp].
+    replaceExact(`  applyShip() { const s = SHIPS[currentPilot.active_ship] || SHIPS.striker; this.ship = s; this.player.maxHp = s.hp; this.player.hp = Math.min(this.player.hp || s.hp, s.hp); this.updateHp(); }`, `  applyShip() {
+    const s = SHIPS[currentPilot.active_ship] || SHIPS.striker;
+    this.ship = s;
+    this.player.maxHp = s.hp;
+    // BUGFIX: previous code used (this.player.hp || s.hp) which treats negative numbers
+    // as truthy, so after dying with negative HP the ship respawned with negative HP and
+    // exploded after one hit. Always clamp to a positive value <= maxHp.
+    if (!Number.isFinite(this.player.hp) || this.player.hp <= 0) this.player.hp = s.hp;
+    this.player.hp = Math.max(1, Math.min(this.player.hp, s.hp));
+    this.updateHp();
+  }`, 'fix applyShip 1-hit death bug');
+
+    // Insert pickup + invuln updates into the main update loop, right before splash damage helper line.
+    replaceExact(`    this.updateStars(dt, speed); this.updateGravity(dt); this.updateLasers(dt); this.updateEnemies(dt); this.updateParticles(dt); this.updateArcs(dt);`, `    this.updateStars(dt, speed); this.updateGravity(dt); this.updateLasers(dt); this.updateEnemies(dt); this.updateParticles(dt); this.updateArcs(dt); this.updatePickups(dt); this.updateStatusEffects(dt);`, 'wire pickups into update');
+
+    // Add pickup spawn helper + update + draw methods, and shield-aware takeDamage.
+    // Inject right after splashDamage helper (which is followed by killEnemy).
+    replaceExact(`  splashDamage(x,y,r,dmg) { for (let j=this.enemies.length-1;j>=0;j--) { const e=this.enemies[j]; if (Math.hypot(e.x-x,e.y-y) < r+e.r) { e.hp -= dmg; if (e.hp <= 0) this.killEnemy(j); } } }`, `  splashDamage(x,y,r,dmg) { for (let j=this.enemies.length-1;j>=0;j--) { const e=this.enemies[j]; if (Math.hypot(e.x-x,e.y-y) < r+e.r) { e.hp -= dmg; if (e.hp <= 0) this.killEnemy(j); } } }
+  // ---------- HEALTH / SHIELD POWER-UPS ----------
+  spawnPickup(forceType) {
+    const roll = forceType || (Math.random() < 0.78 ? 'med' : (Math.random() < 0.6 ? 'shield' : 'full'));
+    const py = 70 + Math.random() * (this.h - 140);
+    const base = {
+      x: this.w + 60, y: py, vx: -180 - Math.random()*40, vy: 0,
+      r: 18, phase: Math.random()*6, life: 16, type: roll
+    };
+    if (roll === 'med') Object.assign(base, { color:'#5dffb0', glow:'#a8ffd6', amount: 30, label:'+30 HP' });
+    else if (roll === 'full') Object.assign(base, { color:'#ffd86b', glow:'#fff4b0', amount: 999, label:'FULL REPAIR', r: 20 });
+    else Object.assign(base, { color:'#80c8ff', glow:'#d6ecff', amount: 6, label:'SHIELD 6s' });
+    this.pickups.push(base);
+  }
+  updatePickups(dt) {
+    this.pickupTimer -= dt;
+    if (this.pickupTimer <= 0) {
+      this.spawnPickup();
+      // Pickups appear every 7-12s, slightly more often as you go further
+      const urgency = Math.min(0.6, this.distance / 4000);
+      this.pickupTimer = 7 + Math.random()*5 - urgency*3;
+    }
+    for (let i=this.pickups.length-1; i>=0; i--) {
+      const p = this.pickups[i];
+      p.x += p.vx*dt;
+      p.phase += dt*3;
+      p.y += Math.sin(p.phase)*22*dt;
+      p.life -= dt;
+      // Particle trail
+      if (Math.random() < 0.4) {
+        this.particles.push({x:p.x+10,y:p.y,vx:60+Math.random()*40,vy:(Math.random()-.5)*40,life:.35,color:p.glow,size:1.8});
+      }
+      // Player collision
+      if (Math.hypot(p.x - this.player.x, p.y - this.player.y) < p.r + 22) {
+        this.collectPickup(p);
+        this.pickups.splice(i,1);
+        continue;
+      }
+      if (p.x < -80 || p.life <= 0) this.pickups.splice(i,1);
+    }
+  }
+  collectPickup(p) {
+    if (p.type === 'med') {
+      this.player.hp = Math.min(this.player.maxHp, this.player.hp + p.amount);
+      showToast('+' + p.amount + ' HULL');
+    } else if (p.type === 'full') {
+      this.player.hp = this.player.maxHp;
+      showToast('HULL REPAIRED');
+    } else if (p.type === 'shield') {
+      this.shieldTime = Math.max(this.shieldTime, p.amount);
+      showToast('SHIELD ' + p.amount + 's');
+    }
+    this.updateHp();
+    this.burst(p.x, p.y, p.glow, 18);
+    // Floating point popup
+    this.particles.push({x:p.x, y:p.y-8, vx:0, vy:-50, life:.9, color:p.glow, size:2, points:p.label});
+  }
+  updateStatusEffects(dt) {
+    if (this.shieldTime > 0) this.shieldTime = Math.max(0, this.shieldTime - dt);
+    if (this.hitFlash > 0) this.hitFlash = Math.max(0, this.hitFlash - dt);
+    if (this.invulnTime > 0) this.invulnTime = Math.max(0, this.invulnTime - dt);
+  }
+  drawPickups() {
+    const ctx = this.ctx;
+    this.pickups.forEach(p => {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.phase * 0.4);
+      ctx.shadowBlur = 24; ctx.shadowColor = p.glow;
+      // Outer glow ring
+      const pulse = 1 + Math.sin(p.phase*3)*0.12;
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, 0, p.r * pulse, 0, Math.PI*2); ctx.stroke();
+      // Inner fill
+      ctx.globalAlpha = .35;
+      ctx.fillStyle = p.color;
+      ctx.beginPath(); ctx.arc(0, 0, p.r * 0.7, 0, Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.rotate(-p.phase * 0.4);
+      // Icon: cross for med/full, ring for shield
+      if (p.type === 'shield') {
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.arc(0, 0, p.r*0.45, 0, Math.PI*2); ctx.stroke();
+      } else {
+        ctx.fillStyle = '#fff';
+        const a = p.r*0.55, b = p.r*0.18;
+        ctx.fillRect(-b, -a, b*2, a*2);
+        ctx.fillRect(-a, -b, a*2, b*2);
+      }
+      ctx.restore();
+    });
+  }`, 'pickup system');
+
+    // Shield-aware + i-frame takeDamage.
+    replaceExact(`  takeDamage(amount) { if (this.dead) return; this.player.hp -= amount; this.updateHp(); if (this.player.hp <= 0) this.die(); }`, `  takeDamage(amount) {
+    if (this.dead) return;
+    // Brief spawn invulnerability + active shield power-up fully blocks damage
+    if (this.invulnTime > 0 || this.shieldTime > 0) {
+      this.hitFlash = 0.18;
+      this.burst(this.player.x, this.player.y, '#80c8ff', 8);
+      return;
+    }
+    this.player.hp -= amount;
+    this.hitFlash = 0.25;
+    this.updateHp();
+    if (this.player.hp <= 0) this.die();
+  }`, 'shield aware takeDamage');
+
+    // Draw pickups + shield aura + hit flash. Insert pickup draw after particles in draw().
+    replaceExact(`    this.drawGravityWells(); this.drawShip(); this.enemies.forEach(e=>this.drawEnemy(e)); this.drawLasers(); this.drawArcs(); this.drawParticles(); this.drawPointPopups();`, `    this.drawGravityWells(); this.drawPickups(); this.drawShip(); this.enemies.forEach(e=>this.drawEnemy(e)); this.drawLasers(); this.drawArcs(); this.drawParticles(); this.drawPointPopups();
+    // Hit flash full-screen tint
+    if (this.hitFlash > 0) {
+      ctx.fillStyle = 'rgba(255,64,80,' + (this.hitFlash * 0.6) + ')';
+      ctx.fillRect(0,0,this.w,this.h);
+    }`, 'draw pickups + hit flash');
+
+    // Add shield aura around ship drawing
+    replaceExact(`  drawShip() { const ctx=this.ctx, p=this.player; ctx.save(); ctx.translate(p.x,p.y); ctx.shadowBlur=20; ctx.shadowColor=this.ship.color; ctx.fillStyle=this.ship.color; ctx.beginPath(); ctx.moveTo(30,0); ctx.lineTo(-20,-18); ctx.lineTo(-9,0); ctx.lineTo(-20,18); ctx.closePath(); ctx.fill(); ctx.strokeStyle=this.ship.accent; ctx.lineWidth=2; ctx.stroke(); ctx.fillStyle=this.ship.accent; ctx.fillRect(-18,-4,18,8); ctx.restore(); }`, `  drawShip() {
+    const ctx=this.ctx, p=this.player;
+    ctx.save(); ctx.translate(p.x,p.y);
+    // Shield aura when active or briefly when spawning
+    if (this.shieldTime > 0 || this.invulnTime > 0) {
+      const t = performance.now() / 200;
+      const pulse = 32 + Math.sin(t)*4;
+      ctx.save();
+      ctx.shadowBlur = 28; ctx.shadowColor = '#80c8ff';
+      ctx.strokeStyle = 'rgba(128,200,255,' + (this.shieldTime > 0 ? 0.85 : 0.55) + ')';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(0, 0, pulse, 0, Math.PI*2); ctx.stroke();
+      ctx.globalAlpha = 0.18;
+      ctx.fillStyle = '#80c8ff';
+      ctx.beginPath(); ctx.arc(0, 0, pulse, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+    // Hit flash on ship
+    if (this.hitFlash > 0) {
+      ctx.shadowBlur = 30; ctx.shadowColor = '#ff4040';
+      ctx.fillStyle = 'rgba(255,80,80,' + this.hitFlash + ')';
+      ctx.beginPath(); ctx.arc(0,0,28,0,Math.PI*2); ctx.fill();
+    }
+    ctx.shadowBlur=20; ctx.shadowColor=this.ship.color;
+    ctx.fillStyle=this.ship.color;
+    ctx.beginPath(); ctx.moveTo(30,0); ctx.lineTo(-20,-18); ctx.lineTo(-9,0); ctx.lineTo(-20,18); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle=this.ship.accent; ctx.lineWidth=2; ctx.stroke();
+    ctx.fillStyle=this.ship.accent; ctx.fillRect(-18,-4,18,8);
+    ctx.restore();
+  }`, 'draw shield aura + hit flash on ship');
 
 
     document.open();
