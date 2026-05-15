@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Shader Pilot</title>
 <style>
-  html,body{height:100%;margin:0;background:#05010f;color:#ffeb80;font-family:monospace;display:grid;place-items:center} .msg{text-align:center;letter-spacing:2px}
+  html,body{height:100%;margin:0;background:#05010f;color:#ffeb80;font-family:monospace;display:grid;place-items:center} .msg{text-align:center;letter-spacing:2px;line-height:1.7}
 </style>
 </head>
 <body>
@@ -19,7 +19,12 @@
       return r.text();
     });
 
-    const oldResume = `function resumeGameAfterOverlay() {
+    const replaceExact = (from, to, label) => {
+      if (!html.includes(from)) console.warn('Patch skipped:', label);
+      html = html.replace(from, to);
+    };
+
+    replaceExact(`function resumeGameAfterOverlay() {
   if (!game) return;
   if (anyOverlayOpen()) return;
   clearGameInputs();
@@ -27,17 +32,14 @@
   game.last = performance.now();
   game.paused = false;
   els.pauseBtn.classList.remove('active');
-}`;
-    const newResume = `let overlayResumeTimer = null;
+}`, `let overlayResumeTimer = null;
 function forceResumeGameFromOverlay() {
   if (!game || anyOverlayOpen()) return;
   clearGameInputs();
-  // Reset timing so we don't get a giant dt jump after a menu/section closes.
   game.last = performance.now();
+  game.lastFrameSeen = performance.now();
   game.paused = false;
   els.pauseBtn.classList.remove('active');
-  // In some mobile WebViews RAF can stall after closing fixed overlays.
-  // Cancel the pending frame and queue a clean one so the run always resumes.
   if (game.running && !game.dead) {
     try { cancelAnimationFrame(game.raf); } catch (_) {}
     game.raf = requestAnimationFrame(game.loop);
@@ -48,61 +50,188 @@ function resumeGameAfterOverlay() {
   if (overlayResumeTimer) clearTimeout(overlayResumeTimer);
   const resume = () => {
     if (anyOverlayOpen()) return;
+    // If the player opened the weapon store from the death screen, Close should
+    // always relaunch instead of leaving a dead, non-updating canvas visible.
+    if (game.dead) {
+      game.respawn();
+      return;
+    }
     forceResumeGameFromOverlay();
   };
   requestAnimationFrame(resume);
-  // Fallback for Safari/iOS cases where the first frame after an overlay close is dropped.
-  overlayResumeTimer = setTimeout(resume, 140);
-}`;
-    html = html.replace(oldResume, newResume);
+  overlayResumeTimer = setTimeout(resume, 80);
+  setTimeout(resume, 220);
+}`, 'robust overlay resume');
 
-    html = html.replace(
-      `this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.dead = false; this.running = false; this.paused = false;`,
-      `this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.dead = false; this.running = false; this.paused = false; this.frameWatch = null; this.lastFrameSeen = performance.now();`
-    );
+    replaceExact(`this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.dead = false; this.running = false; this.paused = false;`, `this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0; this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.dead = false; this.running = false; this.paused = false; this.frameWatch = null; this.lastFrameSeen = performance.now(); this.loopFaults = 0;`, 'game constructor watchdog state');
 
-    html = html.replace(
-      `start() { this.running = true; this.paused = false; this.last = performance.now(); for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160); this.loop(); }
-  stop() { this.running = false; cancelAnimationFrame(this.raf); }`,
-      `start() {
+    replaceExact(`start() { this.running = true; this.paused = false; this.last = performance.now(); for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160); this.loop(); }
+  stop() { this.running = false; cancelAnimationFrame(this.raf); }`, `start() {
     this.running = true;
     this.paused = false;
     this.last = performance.now();
     this.lastFrameSeen = performance.now();
     for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160);
-    this.loop();
+    try { cancelAnimationFrame(this.raf); } catch (_) {}
+    this.raf = requestAnimationFrame(this.loop);
     clearInterval(this.frameWatch);
     this.frameWatch = setInterval(() => {
-      if (!this.running || document.hidden || !els.game.classList.contains('active') || anyOverlayOpen() || this.dead) return;
-      if (this.paused || performance.now() - this.lastFrameSeen > 900) {
-        forceResumeGameFromOverlay();
-      }
-    }, 500);
+      if (!this.running || document.hidden || !els.game.classList.contains('active') || anyOverlayOpen()) return;
+      const stalled = performance.now() - this.lastFrameSeen > 700;
+      if (this.dead) return;
+      if (this.paused || stalled) forceResumeGameFromOverlay();
+    }, 350);
   }
   stop() {
     this.running = false;
     clearInterval(this.frameWatch);
-    cancelAnimationFrame(this.raf);
-  }`
-    );
+    try { cancelAnimationFrame(this.raf); } catch (_) {}
+  }`, 'start/stop watchdog');
 
-    html = html.replace(
-      `const now = performance.now();
-      let dt = Math.min(.05, (now - this.last) / 1000);`,
-      `const now = performance.now();
+    replaceExact(`const now = performance.now();
+      let dt = Math.min(.05, (now - this.last) / 1000);`, `const now = performance.now();
       this.lastFrameSeen = now;
-      let dt = Math.min(.05, (now - this.last) / 1000);`
-    );
+      let dt = Math.min(.05, (now - this.last) / 1000);`, 'track last frame');
 
-    html = html.replace(
-      `} else { this.last = performance.now(); }
-    });`,
-      `} else {
+    replaceExact(`} catch (err) {
+      console.error('Game loop error:', err.message, err.stack);
+    }
+    this.raf = requestAnimationFrame(this.loop);`, `} catch (err) {
+      console.error('Game loop error:', err.message, err.stack);
+      this.loopFaults = (this.loopFaults || 0) + 1;
+      clearGameInputs();
+      this.last = performance.now();
+      if (this.loopFaults > 2) {
+        this.loopFaults = 0;
+        this.lasers = []; this.enemyLasers = []; this.particles = []; this.gravityWells = []; this.arcs = [];
+      }
+    }
+    this.raf = requestAnimationFrame(this.loop);`, 'loop fault recovery');
+
+    replaceExact(`} else { this.last = performance.now(); }
+    });`, `} else {
         this.last = performance.now();
+        this.lastFrameSeen = performance.now();
         if (this.running && !this.dead && !anyOverlayOpen()) forceResumeGameFromOverlay();
       }
-    });`
-    );
+    });`, 'visibility recovery');
+
+    replaceExact(`els.weaponsClose.addEventListener('click', () => { els.weaponsMenu.classList.remove('active'); resumeGameAfterOverlay(); });`, `els.weaponsClose.addEventListener('click', () => {
+  els.weaponsMenu.classList.remove('active');
+  // Coming here from the death screen used to expose the dead canvas and look frozen.
+  // Close now reliably relaunches the run when the ship is destroyed.
+  if (game && game.dead) {
+    els.gameOver.classList.remove('active');
+    game.respawn();
+  } else {
+    resumeGameAfterOverlay();
+  }
+});`, 'weapons close from death relaunches');
+
+    replaceExact(`els.hangarClose.addEventListener('click', () => { els.hangarMenu.classList.remove('active'); resumeGameAfterOverlay(); });`, `els.hangarClose.addEventListener('click', () => {
+  els.hangarMenu.classList.remove('active');
+  if (game && game.dead) {
+    els.gameOver.classList.remove('active');
+    game.respawn();
+  } else {
+    resumeGameAfterOverlay();
+  }
+});`, 'hangar close from death relaunches');
+
+    replaceExact(`    setTimeout(() => this.endRun(), 650);`, `    setTimeout(() => this.endRun(), 220);`, 'shorter death delay');
+
+    replaceExact(`  respawn() {
+    this.dead = false;
+    this.paused = false;
+    this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0;
+    this.lasers = []; this.enemyLasers = []; this.enemies = []; this.particles = []; this.gravityWells = []; this.arcs = [];
+    this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0;
+    this.player.vx = 0; this.player.vy = 0;
+    this.player.x = this.w * .22; this.player.y = this.h * .5;
+    this.input.fire = false; this.input.boost = false;
+    this.touch.up = this.touch.down = this.touch.left = this.touch.right = false;
+    this.keys = {};
+    this.applyShip();
+    for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160);
+    this.last = performance.now();
+    updateHud();
+  }`, `  respawn() {
+    this.dead = false;
+    this.running = true;
+    this.paused = false;
+    els.pauseBtn.classList.remove('active');
+    els.pauseMenu.classList.remove('active');
+    els.weaponsMenu.classList.remove('active');
+    els.hangarMenu.classList.remove('active');
+    els.gameOver.classList.remove('active');
+    this.distance = 0; this.runKills = 0; this.runCredits = 0; this.runPoints = 0;
+    this.lasers = []; this.enemyLasers = []; this.enemies = []; this.particles = []; this.gravityWells = []; this.arcs = [];
+    this.lastFire = 0; this.spawnTimer = 0; this.saveTimer = 0; this.loopFaults = 0;
+    this.player.vx = 0; this.player.vy = 0;
+    this.player.x = this.w * .22; this.player.y = this.h * .5;
+    clearGameInputs();
+    this.applyShip();
+    for (let i=0;i<6;i++) this.spawnEnemy(this.w + i*160);
+    this.last = performance.now();
+    this.lastFrameSeen = performance.now();
+    updateHud();
+    try { cancelAnimationFrame(this.raf); } catch (_) {}
+    this.raf = requestAnimationFrame(this.loop);
+  }`, 'respawn restarts render loop');
+
+    replaceExact(`  async endRun() {
+    this.updatePoints();
+    const newBest = this.runPoints > (currentPilot.best_score||0);
+    const patch = {
+      credits: (currentPilot.credits||0) + this.runCredits,
+      kills: (currentPilot.kills||0) + this.runKills,
+      runs_completed: (currentPilot.runs_completed||0) + 1
+    };
+    if (this.distance > (currentPilot.best_distance||0)) patch.best_distance = this.distance;
+    if (newBest) patch.best_score = this.runPoints;
+    await savePilotPartial(patch);
+    updateHud();
+    if (newBest) showToast('NEW HIGH POINTS');
+    els.goPoints.textContent = this.runPoints;
+    els.goDist.textContent = Math.floor(this.distance);
+    els.goKills.textContent = this.runKills;
+    els.goCredits.textContent = '+' + this.runCredits;
+    els.goBest.textContent = Math.floor(currentPilot.best_distance||0);
+    els.goBestScore.textContent = Math.floor(currentPilot.best_score||0);
+    pauseGameForOverlay();
+    els.gameOver.classList.add('active');
+  }`, `  async endRun() {
+    this.updatePoints();
+    const previousBestScore = currentPilot.best_score || 0;
+    const previousBestDistance = currentPilot.best_distance || 0;
+    const newBest = this.runPoints > previousBestScore;
+    const patch = {
+      credits: (currentPilot.credits||0) + this.runCredits,
+      kills: (currentPilot.kills||0) + this.runKills,
+      runs_completed: (currentPilot.runs_completed||0) + 1
+    };
+    if (this.distance > previousBestDistance) patch.best_distance = this.distance;
+    if (newBest) patch.best_score = this.runPoints;
+
+    // Show the game-over menu immediately. Saving stats can be slow on mobile
+    // networks, so it now happens in the background instead of freezing death.
+    if (newBest) showToast('NEW HIGH POINTS');
+    els.goPoints.textContent = this.runPoints;
+    els.goDist.textContent = Math.floor(this.distance);
+    els.goKills.textContent = this.runKills;
+    els.goCredits.textContent = '+' + this.runCredits;
+    els.goBest.textContent = Math.floor(Math.max(previousBestDistance, this.distance));
+    els.goBestScore.textContent = Math.floor(Math.max(previousBestScore, this.runPoints));
+    pauseGameForOverlay();
+    els.gameOver.classList.add('active');
+
+    savePilotPartial(patch).then((result) => {
+      if (result.ok) updateHud();
+    }).catch((err) => {
+      console.error('End-run save error:', err.message || err);
+      showToast('RUN SAVED LOCALLY');
+    });
+  }`, 'non-blocking death summary');
 
     document.open();
     document.write(html);
